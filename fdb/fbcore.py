@@ -24,7 +24,7 @@ import sys
 import os
 import types
 import unittest
-import ibase
+from . import ibase
 import ctypes, struct, time, datetime, decimal, weakref
 from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow, 
     isc_dpb_address_path, isc_dpb_allocation, isc_dpb_begin_log, 
@@ -151,11 +151,11 @@ def Date(year, month, day):
 def Time(hour, minite, second):
     return datetime.time(hour, minite, second)
 def DateFromTicks(ticks):
-    return apply(Date,time.localtime(ticks)[:3])
+    return Date(*time.localtime(ticks)[:3])
 def TimeFromTicks(ticks):
-    return apply(Time,time.localtime(ticks)[3:6])
+    return Time(*time.localtime(ticks)[3:6])
 def TimestampFromTicks(ticks):
-    return apply(Timestamp,time.localtime(ticks)[:6])
+    return Timestamp(*time.localtime(ticks)[:6])
 def Binary(b):
     return b
 
@@ -348,7 +348,7 @@ def build_dpb(user,password,sql_dialect,role,charset,buffers,force_write,no_rese
         params.append(newEntry)
     def addInt(codeAsByte, value):
         #assert isinstance(codeAsByte,types.IntType) and codeAsByte >= 0 and codeAsByte <= 255
-        if not isinstance(value, (int, long)) or value < 0 or value > 255:
+        if not isinstance(value, int) or value < 0 or value > 255:
             raise ProgrammingError("The value for an integer DPB code must be"
                 " an int or long with a value between 0 and 255."
               )
@@ -445,7 +445,7 @@ def create_database(*args):
        the Firebird SQL Reference for syntax).
     $dialect: (optional) the SQL dialect under which to execute the statement
     """
-    if len(args) >= 1 and isinstance(args[0], unicode):
+    if len(args) >= 1 and isinstance(args[0], str):
         args = (args[0].encode(_FS_ENCODING),) + args[1:]
 
     if len(args) > 1:
@@ -1097,7 +1097,7 @@ class PreparedStatement(object):
                     scale = sqlvar.sqlscale
                     precision = 0
                     if vartype in [ibase.SQL_TEXT,ibase.SQL_VARYING]:
-                        vtype = types.StringType
+                        vtype = bytes
                         dispsize = sqlvar.sqllen
                     elif (vartype in [ibase.SQL_SHORT,ibase.SQL_LONG,ibase.SQL_INT64] 
                           and (sqlvar.sqlsubtype or scale)):
@@ -1105,13 +1105,13 @@ class PreparedStatement(object):
                         precision = self.__get_connection()._determine_field_precision(sqlvar)
                         dispsize = 20
                     elif vartype == ibase.SQL_SHORT:
-                        vtype = types.IntType
+                        vtype = int
                         dispsize = 6
                     elif vartype == ibase.SQL_LONG:
-                        vtype = types.IntType
+                        vtype = int
                         dispsize = 11
                     elif vartype == ibase.SQL_INT64:
-                        vtype = types.LongType
+                        vtype = int
                         dispsize = 20
                     elif vartype in [ibase.SQL_FLOAT,ibase.SQL_DOUBLE,ibase.SQL_D_FLOAT]:
                         # Special case, dialect 1 DOUBLE/FLOAT could be Fixed point
@@ -1119,11 +1119,11 @@ class PreparedStatement(object):
                             vtype = decimal.Decimal
                             precision = self.__get_connection()._determine_field_precision(sqlvar)
                         else:
-                            vtype = types.FloatType
+                            vtype = float
                         dispsize = 17
                     elif vartype == ibase.SQL_BLOB:
                         scale = sqlvar.sqlsubtype
-                        vtype = types.StringType
+                        vtype = bytes
                         dispsize = 0
                     elif vartype == ibase.SQL_TIMESTAMP:
                         vtype = datetime.datetime
@@ -1135,7 +1135,7 @@ class PreparedStatement(object):
                         vtype = datetime.time
                         dispsize = 11
                     elif vartype == ibase.SQL_ARRAY:
-                        vtype = types.ListType
+                        vtype = list
                         dispsize = -1
                     else:
                         vtype = None
@@ -1390,7 +1390,7 @@ class PreparedStatement(object):
     def __Tuple2XSQLDA(self,xsqlda,parameters):
         """Move data from parameters to input XSQLDA.
         """
-        for i in xrange(xsqlda.sqld):
+        for i in range(xsqlda.sqld):
             sqlvar = xsqlda.sqlvar[i]
             value = parameters[i]
             vartype = sqlvar.sqltype & ~1
@@ -1407,12 +1407,12 @@ class PreparedStatement(object):
                 if ((sqlvar.sqltype & 1) != 0):
                     sqlvar.sqlind = ctypes.pointer(ibase.ISC_SHORT(0))
                 # Fill in value by type
-                if ((vartype != ibase.SQL_BLOB and isinstance(value,(types.StringTypes))) 
+                if ((vartype != ibase.SQL_BLOB and isinstance(value,(str))) 
                     or vartype in [ibase.SQL_TEXT,ibase.SQL_VARYING]):
                     # Place for Implicit Conversion of Input Parameters from Strings
-                    if isinstance(value,types.UnicodeType):
+                    if isinstance(value,str):
                         value = value.encode(ibase.charset_map.get(self.__get_connection().charset, self.__get_connection().charset))
-                    if not isinstance(value,types.StringType):
+                    if not isinstance(value,bytes):
                         value = str(value)
                     if len(value) > sqlvar.sqllen:
                         raise ValueError("Value of parameter (%i) is too long, expected %i, found %i" % (i,sqlvar.sqllen,len(value)))
@@ -1424,7 +1424,7 @@ class PreparedStatement(object):
                     if (sqlvar.sqlsubtype or scale):
                         if isinstance(value, decimal.Decimal):
                             value = int((value * _tenTo[abs(scale)]).to_integral())
-                        elif isinstance(value, (int, long, float,)):
+                        elif isinstance(value, (int, float)):
                             value = int(value * _tenTo[abs(scale)])
                         else:
                             raise TypeError('Objects of type %s are not acceptable input for'
@@ -1502,7 +1502,7 @@ class PreparedStatement(object):
     def _execute(self,parameters = None):
         # Bind parameters
         if parameters :
-            if not isinstance(parameters,(types.ListType,types.TupleType)):
+            if not isinstance(parameters,(list,tuple)):
                 raise TypeError("parameters must be list or tuple")
             if len(parameters) > self.in_sqlda.sqln:
                 raise ProgrammingError("Statement parameter sequence contains %d parameters, but only %d are allowed" % (len(parameters),self.in_sqlda.sqln))
@@ -1597,7 +1597,7 @@ class Cursor(object):
         self._transaction = transaction
         self._ps = None # current prepared statement
         
-    def next(self):
+    def __next__(self):
         row = self.fetchone()
         if row:
             return row
@@ -1618,7 +1618,7 @@ class Cursor(object):
         else:
             return None
     def __set_name(self,name):
-        if name == None or not isinstance(name,types.StringType):
+        if name == None or not isinstance(name,bytes):
             raise ProgrammingError("The name attribute can only be set to a string, and cannot be deleted")
         if not self._ps:
             raise ProgrammingError("This cursor has not yet executed a statement, so setting its name attribute would be meaningless")
@@ -1629,7 +1629,7 @@ class Cursor(object):
         if not parameters:
             params = []
         else:
-            if isinstance(parameters,(types.ListType,types.TupleType)):
+            if isinstance(parameters,(list,tuple)):
                 params = parameters
             else:
                 raise ProgrammingError("callproc paremetrs must be List or Tuple")
@@ -1639,7 +1639,7 @@ class Cursor(object):
     def close(self):
         if self._ps != None:
             self._ps._close()
-        for ps in self._prepared_statements.values():
+        for ps in list(self._prepared_statements.values()):
             ps._close()
         self._prepared_statements.clear()
         self._name = None
@@ -1891,7 +1891,7 @@ class Iterator(object):
         self.exhausted = False
     def __iter__(self):
         return self
-    def next(self):
+    def __next__(self):
         if self.exhausted:
             raise StopIteration
         else:
@@ -1942,7 +1942,7 @@ class _RowMapping(object):
             except KeyError:
                 raise KeyError('Result set has no field named "%s".  The field'
                     ' name must be one of: (%s)'
-                    % (fieldName, ', '.join(fields.keys()))
+                    % (fieldName, ', '.join(list(fields.keys())))
                   )
     def get(self, fieldName, defaultValue=None):
         try:
@@ -1961,16 +1961,16 @@ class _RowMapping(object):
         # corresponding values.
         return '<result set row with %s>' % ', '.join([
             '%s = %s' % (fieldName, self[fieldName])
-            for fieldName in self._fields.keys()
+            for fieldName in list(self._fields.keys())
           ])
     def keys(self):
         # Note that this is an *ordered* list of keys.
         return [fieldSpec[DESCRIPTION_NAME] for fieldSpec in self._description]
     def values(self):
         # Note that this is an *ordered* list of values.
-        return [self[fieldName] for fieldName in self.keys()]
+        return [self[fieldName] for fieldName in list(self.keys())]
     def items(self):
-        return [(fieldName, self[fieldName]) for fieldName in self.keys()]
+        return [(fieldName, self[fieldName]) for fieldName in list(self.keys())]
     def iterkeys(self):
         for fieldDesc in self._description:
             yield fieldDesc[DESCRIPTION_NAME]
@@ -2109,7 +2109,7 @@ class TPB(_RequestBufferBuilder):
     def _set_lock_timeout(self, lock_timeout):
         if lock_timeout is not None:
             UINT_MAX = 2 ** (struct.calcsize('I') * 8) - 1
-            if (not isinstance(lock_timeout, (int, long))) or (
+            if (not isinstance(lock_timeout, int)) or (
                 lock_timeout < 0 or lock_timeout > UINT_MAX):
                 raise ProgrammingError('Lock resolution must be either None'
                     ' or a non-negative int number of seconds between 0 and'
@@ -2157,7 +2157,7 @@ class TableReservation(object):
             return ''
         frags = []
         _ = frags.append
-        for tableName, resDefs in self.iteritems():
+        for tableName, resDefs in self.items():
             tableNameLenWithTerm = len(tableName) + 1
             for (sharingMode, accessMode) in resDefs:
                 _(chr(accessMode))
@@ -2167,8 +2167,8 @@ class TableReservation(object):
                 _(chr(sharingMode))
         return ''.join(frags)
     def __len__(self):
-        return sum([len(item) for item in self._res.items()])
-    def __nonzero__(self):
+        return sum([len(item) for item in list(self._res.items())])
+    def __bool__(self):
         return len(self) != 0
     def __getitem__(self, key):
         key = self._validateKey(key)
@@ -2196,7 +2196,7 @@ class TableReservation(object):
             return '<TableReservation with no entries>'
         frags = ['<TableReservation with entries:\n']
         _ = frags.append
-        for tableName, resDefs in self.iteritems():
+        for tableName, resDefs in self.items():
             _('  "%s":\n' % tableName)
             for rd in resDefs:
                 sharingModeStr = TableReservation._SHARING_MODE_STRS[rd[0]]
@@ -2205,17 +2205,17 @@ class TableReservation(object):
         _('>')
         return ''.join(frags)
     def keys(self):
-        return self._res.keys()
+        return list(self._res.keys())
     def values(self):
-        return self._res.values()
+        return list(self._res.values())
     def items(self):
-        return self._res.items()
+        return list(self._res.items())
     def iterkeys(self):
-        return self._res.iterkeys()
+        return iter(self._res.keys())
     def itervalues(self):
-        return self._res.itervalues()
+        return iter(self._res.values())
     def iteritems(self):
-        return self._res.iteritems()
+        return iter(self._res.items())
     def __setitem__(self, key, value):
         key = self._validateKey(key)
         key = _normalizeDatabaseIdentifier(key)
@@ -2250,8 +2250,8 @@ class TableReservation(object):
             value = otherValues
         self._res[key] = value
     def _validateKey(self, key):
-        keyMightBeAcceptable = isinstance(key, basestring)
-        if keyMightBeAcceptable and isinstance(key, unicode):
+        keyMightBeAcceptable = isinstance(key, str)
+        if keyMightBeAcceptable and isinstance(key, str):
             try:
                 key = key.encode('ASCII')
             except UnicodeEncodeError:

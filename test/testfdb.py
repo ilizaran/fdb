@@ -345,22 +345,22 @@ class TestServices2(unittest.TestCase):
     def test_log(self):
         log = self.svc.getLog()
         assert log
-        assert isinstance(log,types.StringType)
+        assert isinstance(log,bytes)
     def test_getLimboTransactionIDs(self):
         ids = self.svc.getLimboTransactionIDs('employee')
-        assert isinstance(ids,types.ListType)
+        assert isinstance(ids,list)
     def test_getStatistics(self):
         stat = self.svc.getStatistics('employee')
         assert stat
-        assert isinstance(stat,types.StringType)
+        assert isinstance(stat,bytes)
     def test_backup(self):
         log = self.svc.backup('employee','/tmp/test_employee.fbk')
         assert log
-        assert isinstance(log,types.StringType)
+        assert isinstance(log,bytes)
     def test_restore(self):
         log = self.svc.restore('/tmp/test_employee.fbk','/tmp/test_employee.fdb',replace=1)
         assert log
-        assert isinstance(log,types.StringType)
+        assert isinstance(log,bytes)
     def test_setDefaultPageBuffers(self):
         result = self.svc.setDefaultPageBuffers('/tmp/test_employee.fdb',100)
         assert not result
@@ -399,7 +399,7 @@ class TestServices2(unittest.TestCase):
         assert not result
     def test_getUsers(self):
         users = self.svc.getUsers()
-        assert isinstance(users,types.ListType)
+        assert isinstance(users,list)
         assert isinstance(users[0],fdb.services.User)
         assert users[0].username == 'SYSDBA'
     def test_manage_user(self):

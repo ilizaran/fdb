@@ -774,7 +774,7 @@ isc_info_db_impl_isc_sgi = 41
 
 # status codes
 
-isc_segment     = 335544366L
+isc_segment     = 335544366
 
 FB_API_HANDLE = c_uint
 intptr_t = c_long
