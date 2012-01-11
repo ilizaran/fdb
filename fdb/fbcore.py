@@ -92,7 +92,6 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     isc_tpb_shared, isc_tpb_verb_time, isc_tpb_version3, isc_tpb_wait, isc_tpb_write
     )
 
-from exceptions import NotImplementedError
 
 PYTHON_MAJOR_VER = sys.version_info[0]
 
@@ -208,7 +207,6 @@ transaction_parameter_block = {
 _SIZE_OF_SHORT = ctypes.sizeof(ctypes.c_short)
 
 _tenTo = [10**x for x in range(20)]
-del x
 
 __xsqlda_cache = {}
 
