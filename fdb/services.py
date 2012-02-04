@@ -24,7 +24,7 @@ import fdb
 import sys
 import os
 import types
-from . import ibase
+import ibase
 import ctypes, struct
 import warnings
 
@@ -54,7 +54,7 @@ def _checkString(s):
             # already know s is a str instance.
             s.encode('ASCII')
         else:
-            if isinstance(s, str):
+            if isinstance(s, unicode):
                 # Raise a more specific error message than the general case.
                 raise UnicodeError
             else:
@@ -349,7 +349,7 @@ class Connection(object):
     def _requireStrOrTupleOfStr(self,x):
         if isinstance(x, str):
             x = (x,)
-        elif isinstance(x, str):
+        elif isinstance(x, unicode):
             # We know the following call to _checkString will raise an exception,
             # but calling it anyway allows us to centralize the error message
             # generation:
@@ -509,7 +509,7 @@ class Connection(object):
             'destination filenames', 'destination file sizes'
           )
 
-        if len(self._excludeElementsOfTypes(destFileSizes, (int, int))) > 0:
+        if len(self._excludeElementsOfTypes(destFileSizes, (int, long))) > 0:
             raise TypeError("Every element of destFileSizes must be an int"
                 " or long."
               )

@@ -22,4 +22,4 @@
 
 from fdb.fbcore import *
 from fdb.fbcore import __version__
-from . import services 
+from fdb import services
