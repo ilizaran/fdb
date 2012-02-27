@@ -24,7 +24,7 @@ import sys
 import os
 import types
 import unittest
-import ibase
+from . import ibase
 import ctypes, struct, time, datetime, decimal, weakref
 from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow, 
     isc_dpb_address_path, isc_dpb_allocation, isc_dpb_begin_log, 
@@ -92,7 +92,7 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     isc_tpb_shared, isc_tpb_verb_time, isc_tpb_version3, isc_tpb_wait, isc_tpb_write
     )
 
-from exceptions import NotImplementedError
+#from exceptions import NotImplementedError
 
 PYTHON_MAJOR_VER = sys.version_info[0]
 
@@ -208,7 +208,7 @@ transaction_parameter_block = {
 _SIZE_OF_SHORT = ctypes.sizeof(ctypes.c_short)
 
 _tenTo = [10**x for x in range(20)]
-del x
+#del x
 
 __xsqlda_cache = {}
 
@@ -321,14 +321,14 @@ def exception_from_status(error, status, preamble=None):
     msglist.append('- SQLCODE: %i' % sqlcode)
     
     ibase.isc_sql_interprete(sqlcode,msg,512)
-    msglist.append('- '+msg.value)
+    msglist.append('- '+(msg.value).decode('utf_8'))
     
     pvector = ctypes.cast(ctypes.addressof(status),ibase.ISC_STATUS_PTR)
     result = 0
 
     while result == 0:
         result = ibase.fb_interpret(msg,512,pvector)
-        msglist.append('- '+msg.value)
+        msglist.append('- '+(msg.value).decode('utf_8'))
     return error('\n'.join(msglist),sqlcode,error_code)
 
 def build_dpb(user,password,sql_dialect,role,charset,buffers,force_write,no_reserve,db_key_scope):

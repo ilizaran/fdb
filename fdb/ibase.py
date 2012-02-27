@@ -86,6 +86,7 @@ charset_map = {
     }
 
 DB_CHAR_SET_NAME_TO_PYTHON_ENCODING_MAP = charset_map
+DEFAULT_CHARSET='UTF8'
 
 # C integer limit constants
 
