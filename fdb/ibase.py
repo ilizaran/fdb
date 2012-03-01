@@ -16,13 +16,18 @@
 #  and all contributors signed below.
 #
 #  All Rights Reserved.
-#  Contributor(s): ______________________________________.
+#  Contributor(s): Philippe Makowski <pmakowski@ibphoenix.fr>
+#                  ______________________________________.
 #
 # See LICENSE.TXT for details.
 
 from ctypes import *
 from ctypes.util import find_library
 import sys
+import types
+import operator
+
+PYTHON_MAJOR_VER = sys.version_info[0]
 
 if sys.platform == 'darwin':
     fb_library_name = find_library('Firebird')
@@ -34,6 +39,58 @@ else:
     fb_library = CDLL(fb_library_name)
 
 #-------------------
+
+if PYTHON_MAJOR_VER==3:
+    def b(s):
+        if s == None:
+            return s
+        else:
+            try:
+                return s.encode("latin-1")
+            except:
+                return s
+    def s(s):
+        return s
+    ord2 = lambda x: x 
+    if sys.version_info[1] <= 1:
+        def int2byte(i):
+            return bytes((i,))
+    else:
+        # This is about 2x faster than the implementation above on 3.2+
+        int2byte = operator.methodcaller("to_bytes", 1, "big")
+    def mychr(i):
+        return i    
+    mybytes = bytes
+    myunicode = str
+    mylong = int
+    StringType = str
+    IntType = int
+    LongType = int
+    FloatType = float
+    ListeType = list
+    UnicodeType = str
+    TupleType = tuple
+    xrange = range
+
+else:
+    def b(s):
+        return s
+    int2byte = chr
+    s = str
+    ord2 = ord
+    def mychr(i):
+        return chr(i)    
+    mybytes = str
+    myunicode = unicode
+    mylong = long
+    StringType = types.StringType
+    IntType = types.IntType
+    LongType = types.LongType
+    FloatType = types.FloatType
+    ListeType = types.ListType
+    UnicodeType = types.UnicodeType
+    TupleType = types.TupleType
+    xrange = xrange
 
 MAX_BLOB_SEGMENT_SIZE = 65535
 
@@ -783,6 +840,7 @@ isc_info_ods_version = 32
 isc_info_db_impl_isc_sgi = 41
 
 # status codes
+
 
 isc_segment     = 335544366
 

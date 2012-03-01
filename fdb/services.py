@@ -16,7 +16,8 @@
 #  and all contributors signed below.
 #
 #  All Rights Reserved.
-#  Contributor(s): ______________________________________.
+#  Contributor(s): Philippe Makowski <pmakowski@ibphoenix.fr>
+#                  ______________________________________.
 #
 # See LICENSE.TXT for details.
 
@@ -28,7 +29,6 @@ import fdb.ibase as ibase
 import ctypes, struct
 import warnings
 
-PYTHON_MAJOR_VER = sys.version_info[0]
 
 # The following SHUT_* constants are to be passed as the $shutdownMethod
 # parameter to Connection.shutdown:
@@ -47,22 +47,46 @@ ACCESS_READ_WRITE = ibase.isc_spb_prp_am_readwrite
 ACCESS_READ_ONLY = ibase.isc_spb_prp_am_readonly
 
 def _checkString(s):
-    try:
-        if isinstance(s, str):
-            # In str instances, Python allows any character
-            # Since Firebird's
-            # Services API only works (properly) with ASCII, we need to make
-            # sure there are no non-ASCII characters in s.
-            s.encode('ASCII')
-        else:
-            raise TypeError('String argument to Services API must be'
-                    ' of type str, not %s.' % type(s)
-                  )
-    except UnicodeEncodeError:
-        raise TypeError("The database engine's Services API only works"
-            " properly with ASCII string parameters, so str instances that"
-            " contain non-ASCII characters are disallowed."
-          )
+    if ibase.PYTHON_MAJOR_VER==3:
+        try:
+            if isinstance(s, str):
+                # In str instances, Python allows any character
+                # Since Firebird's
+                # Services API only works (properly) with ASCII, we need to make
+                # sure there are no non-ASCII characters in s.
+                s.encode('ASCII')
+            else:
+                raise TypeError('String argument to Services API must be'
+                        ' of type str, not %s.' % type(s)
+                      )
+        except UnicodeEncodeError:
+            raise TypeError("The database engine's Services API only works"
+                " properly with ASCII string parameters, so str instances that"
+                " contain non-ASCII characters are disallowed."
+              )
+    else:
+        try:
+            if isinstance(s, str):
+                # In str instances, Python allows any character in the "default
+                # encoding", which is typically not ASCII.  Since Firebird's
+                # Services API only works (properly) with ASCII, we need to make
+                # sure there are no non-ASCII characters in s, even though we
+                # already know s is a str instance.
+                s.encode('ASCII')
+            else:
+                if isinstance(s, unicode):
+                    # Raise a more specific error message than the general case.
+                    raise UnicodeError
+                else:
+                    raise TypeError('String argument to Services API must be'
+                        ' of type str, not %s.' % type(s)
+                      )
+        except UnicodeError:
+            raise TypeError("The database engine's Services API only works"
+                " properly with ASCII string parameters, so str instances that"
+                " contain non-ASCII characters, and all unicode instances, are"
+                " disallowed."
+              )
 
 def _string2spb(spb, code, s):
     sLen = len(s)
@@ -193,10 +217,16 @@ class Connection(object):
             self._svc_handle = None
     
     def _bytes_to_str(self, b):
-        return b.decode(ibase.charset_map.get(self.charset, self.charset))
+        if ibase.PYTHON_MAJOR_VER==3:
+            return b.decode(ibase.charset_map.get(self.charset, self.charset))
+        else:
+            return s.encode(ibase.charset_map.get(self.charset, self.charset))
 
     def _str_to_bytes(self, s):
-        return s.encode(ibase.charset_map.get(self.charset, self.charset))
+        if ibase.PYTHON_MAJOR_VER==3:
+            return s.encode(ibase.charset_map.get(self.charset, self.charset))
+        else:
+            return s
 
     def _extract_int(self,raw,index):
         new_index = index+ctypes.sizeof(ctypes.c_ushort)
@@ -204,7 +234,10 @@ class Connection(object):
     def _extract_string(self,raw,index):
         (size,index) = self._extract_int(raw,index)
         new_index = index+size
-        return (str(raw[index:new_index],ibase.charset_map.get(self.charset, self.charset)),new_index)
+        if ibase.PYTHON_MAJOR_VER==3:
+            return (str(raw[index:new_index],ibase.charset_map.get(self.charset, self.charset)),new_index)
+        else:
+            return (str(raw[index:new_index]),new_index)
     def _Q(self, code, resultType, timeout = -1):
         if code < 0 or code > ibase.USHRT_MAX:
             raise fdb.ProgrammingError("The service query request_buf code must fall between 0 and %d, inclusive." % ibase.USHRT_MAX)
@@ -212,7 +245,7 @@ class Connection(object):
         result_size = 1024
         request = fdb.bs([code])
         if timeout == -1:
-            spb = ''.encode('latin-1')
+            spb = ibase.b('')
         else:
             spb = fdb.bs(ibase.isc_info_svc_timeout,timeout)
         while True:
@@ -238,7 +271,7 @@ class Connection(object):
             size = result_size - 1
             while result_buffer[size] == '\0':
                 size -= 1
-            result = result_buffer[:size] 
+            result = ibase.s(result_buffer[:size]) 
             
         return result
     def _get_isc_info_svc_svr_db_info(self):
@@ -246,12 +279,12 @@ class Connection(object):
         databases = []
 
         raw = self._QR(ibase.isc_info_svc_svr_db_info)
-        #assert raw[-1] == chr(ibase.isc_info_flag_end)
+#        assert raw[-1] == ibase.int2byte(ibase.isc_info_flag_end)
 
         pos = 1 # Ignore raw[0].
         upper_limit = len(raw) - 1
         while pos < upper_limit:
-            cluster = ord(chr(raw[pos]))
+            cluster = ibase.ord2(raw[pos])
             pos += 1
 
             if cluster == ibase.isc_spb_num_att: # Number of attachments.
@@ -350,15 +383,16 @@ class Connection(object):
         return [element for element in seq 
                 if not isinstance(element, theTypesToExclude)]
     def _requireStrOrTupleOfStr(self,x):
-        if isinstance(x, bytes):
+        if isinstance(x, ibase.mybytes):
             x = (x,)
-        elif isinstance(x, str):
+        elif isinstance(x, ibase.myunicode):
             # We know the following call to _checkString will raise an exception,
             # but calling it anyway allows us to centralize the error message
             # generation:
             _checkString(x)
-#        for el in x:
-#            _checkString(el)
+        if ibase.PYTHON_MAJOR_VER!=3:
+            for el in x:
+               _checkString(el)
         return x
     def _propertyAction(self, database, partialReqBuf):
         # Begin constructing the request buffer (incorporate the one passed as
@@ -419,7 +453,7 @@ class Connection(object):
         transIDs = []
         i = 0
         while i < nBytes:
-            byte = ord(chr(raw[i])) 
+            byte = ord2(raw[i]) 
             if byte in (ibase.isc_spb_single_tra_id, ibase.isc_spb_multi_tra_id):
                 # The transaction ID is a 32-bit integer that begins
                 # immediately after position i.
@@ -518,8 +552,9 @@ class Connection(object):
             'destination filenames', 'destination file sizes'
           )
 
-        if len(self._excludeElementsOfTypes(destFileSizes, (int, ))) > 0:
-            raise TypeError("Every element of destFileSizes must be an int."
+        if len(self._excludeElementsOfTypes(destFileSizes, (int, ibase.mylong ))) > 0:
+            raise TypeError("Every element of destFileSizes must be an int"
+                " or long."
               )
         destFileSizesCount = len(destFileSizes)
 
@@ -781,7 +816,7 @@ class Connection(object):
         only the user with that username.
         """
         if username is not None:
-            if isinstance(username, str):
+            if isinstance(username, ibase.myunicode):
                 _checkString(username)
                 username = self._str_to_bytes(username)
         reqBuf = _ServiceActionRequestBuilder(ibase.isc_action_svc_display_user)
@@ -795,7 +830,7 @@ class Connection(object):
         pos = 1 # Ignore raw[0].
         upper_limit = len(raw) - 1
         while pos < upper_limit:
-            cluster = ord(chr(raw[pos]))
+            cluster = ibase.ord2(raw[pos])
             pos += 1
             if cluster == ibase.isc_spb_sec_username:
                 if curUser is not None:
@@ -979,7 +1014,10 @@ class _ServiceActionRequestBuilder(object):
         # because it will cause isc_service_start to raise an inscrutable error
         # message with Firebird 1.5 (though it would not have raised an error
         # at all with Firebird 1.0 and earlier).
-        colonIndex = (databaseName.decode('utf_8')).find(':')
+        if ibase.PYTHON_MAJOR_VER==3:
+            colonIndex = (databaseName.decode('utf_8')).find(':')
+        else:
+            colonIndex = databaseName.find(':')
         if colonIndex != -1:
             # This code makes no provision for platforms other than Windows
             # that allow colons in paths (such as MacOS).  Some of
@@ -1008,5 +1046,5 @@ class _ServiceActionRequestBuilder(object):
                   )
         self.addString(ibase.isc_spb_dbname, databaseName)
     def render(self):
-        return (''.encode('latin-1')).join(self._buffer)
+        return ibase.b('').join(self._buffer)
 
