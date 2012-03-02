@@ -51,7 +51,7 @@ if PYTHON_MAJOR_VER==3:
                 return s
     def s(s):
         return s
-    ord2 = lambda x: x 
+    ord2 = lambda x: x
     if sys.version_info[1] <= 1:
         def int2byte(i):
             return bytes((i,))
@@ -59,7 +59,7 @@ if PYTHON_MAJOR_VER==3:
         # This is about 2x faster than the implementation above on 3.2+
         int2byte = operator.methodcaller("to_bytes", 1, "big")
     def mychr(i):
-        return i    
+        return i
     mybytes = bytes
     myunicode = str
     mylong = int
@@ -79,7 +79,7 @@ else:
     s = str
     ord2 = ord
     def mychr(i):
-        return chr(i)    
+        return chr(i)
     mybytes = str
     myunicode = unicode
     mylong = long
@@ -393,27 +393,27 @@ isc_info_record_errors = 55
 isc_info_set_page_buffers = 61
 
 # SQL information items
-isc_info_sql_select = 4;
-isc_info_sql_bind = 5;
-isc_info_sql_num_variables = 6;
-isc_info_sql_describe_vars = 7;
-isc_info_sql_describe_end = 8;
-isc_info_sql_sqlda_seq = 9;
-isc_info_sql_message_seq = 10;
-isc_info_sql_type = 11;
-isc_info_sql_sub_type = 12;
-isc_info_sql_scale = 13;
-isc_info_sql_length = 14;
-isc_info_sql_null_ind = 15;
-isc_info_sql_field = 16;
-isc_info_sql_relation = 17;
-isc_info_sql_owner = 18;
-isc_info_sql_alias = 19;
-isc_info_sql_sqlda_start = 20;
-isc_info_sql_stmt_type = 21;
-isc_info_sql_get_plan = 22;
-isc_info_sql_records = 23;
-isc_info_sql_batch_fetch = 24;
+isc_info_sql_select = 4
+isc_info_sql_bind = 5
+isc_info_sql_num_variables = 6
+isc_info_sql_describe_vars = 7
+isc_info_sql_describe_end = 8
+isc_info_sql_sqlda_seq = 9
+isc_info_sql_message_seq = 10
+isc_info_sql_type = 11
+isc_info_sql_sub_type = 12
+isc_info_sql_scale = 13
+isc_info_sql_length = 14
+isc_info_sql_null_ind = 15
+isc_info_sql_field = 16
+isc_info_sql_relation = 17
+isc_info_sql_owner = 18
+isc_info_sql_alias = 19
+isc_info_sql_sqlda_start = 20
+isc_info_sql_stmt_type = 21
+isc_info_sql_get_plan = 22
+isc_info_sql_records = 23
+isc_info_sql_batch_fetch = 24
 
 # SQL information return values
 isc_info_sql_stmt_select = 1
@@ -537,19 +537,19 @@ isc_spb_trusted_auth = 111
 isc_spb_process_name = 112
 
 # Service action items
-isc_action_svc_backup = 1           # Starts database backup process on the server 
+isc_action_svc_backup = 1           # Starts database backup process on the server
 isc_action_svc_restore = 2          # Starts database restore process on the server
-isc_action_svc_repair = 3           # Starts database repair process on the server 
+isc_action_svc_repair = 3           # Starts database repair process on the server
 isc_action_svc_add_user = 4         # Adds a new user to the security database
-isc_action_svc_delete_user = 5      # Deletes a user record from the security database 
-isc_action_svc_modify_user = 6      # Modifies a user record in the security database 
-isc_action_svc_display_user = 7     # Displays a user record from the security database 
-isc_action_svc_properties = 8       # Sets database properties 
-isc_action_svc_add_license = 9      # Adds a license to the license file 
-isc_action_svc_remove_license = 10  # Removes a license from the license file 
-isc_action_svc_db_stats = 11        # Retrieves database statistics 
-isc_action_svc_get_ib_log = 12      # Retrieves the InterBase log file from the server 
-isc_action_svc_get_fb_log = 12      # Retrieves the Firebird log file from the server 
+isc_action_svc_delete_user = 5      # Deletes a user record from the security database
+isc_action_svc_modify_user = 6      # Modifies a user record in the security database
+isc_action_svc_display_user = 7     # Displays a user record from the security database
+isc_action_svc_properties = 8       # Sets database properties
+isc_action_svc_add_license = 9      # Adds a license to the license file
+isc_action_svc_remove_license = 10  # Removes a license from the license file
+isc_action_svc_db_stats = 11        # Retrieves database statistics
+isc_action_svc_get_ib_log = 12      # Retrieves the InterBase log file from the server
+isc_action_svc_get_fb_log = 12      # Retrieves the Firebird log file from the server
 
 # Service information items
 isc_info_svc_svr_db_info = 50    # Retrieves the number of attachments and databases */
@@ -1287,7 +1287,7 @@ isc_start_multiple = fb_library.isc_start_multiple
 isc_start_multiple.restype = ISC_STATUS
 isc_start_multiple.argtypes = [POINTER(ISC_STATUS), POINTER(isc_tr_handle), c_short, c_void_p]
 
-### 
+###
 if sys.platform in ['win32','cygwin','os2','os2emx']:
     P_isc_start_transaction = CFUNCTYPE(ISC_STATUS,POINTER(ISC_STATUS), POINTER(isc_tr_handle), c_short,POINTER(isc_db_handle),c_short, STRING)
     isc_start_transaction = P_isc_start_transaction(('isc_start_transaction',fb_library))

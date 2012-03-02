@@ -24,7 +24,6 @@
 import fdb
 import sys
 import os
-import types
 import fdb.ibase as ibase
 import ctypes, struct
 import warnings
@@ -152,7 +151,7 @@ def connect(host='service_mgr',
     host.  Therefore, the database specified as a parameter to methods such as
     getStatistics MUST NOT include the host name of the database server.
     """
-    
+
     if password is None:
         raise ProgrammingError('A password is required to use the Services Manager.')
 
@@ -190,7 +189,7 @@ class Connection(object):
     QUERY_TYPE_PLAIN_INTEGER = 1
     QUERY_TYPE_PLAIN_STRING = 2
     QUERY_TYPE_RAW = 3
-    
+
     def __init__(self, host, user, password, charset=ibase.DEFAULT_CHARSET):
         self._svc_handle = ibase.isc_svc_handle(0)
         self._isc_status = ibase.ISC_STATUS_ARRAY()
@@ -215,12 +214,12 @@ class Connection(object):
                 raise fdb.exception_from_status(fdb.DatabaseError,self._isc_status,
                                       "Services/isc_service_detach:")
             self._svc_handle = None
-    
+
     def _bytes_to_str(self, b):
         if ibase.PYTHON_MAJOR_VER==3:
             return b.decode(ibase.charset_map.get(self.charset, self.charset))
         else:
-            return s.encode(ibase.charset_map.get(self.charset, self.charset))
+            return b.encode(ibase.charset_map.get(self.charset, self.charset))
 
     def _str_to_bytes(self, s):
         if ibase.PYTHON_MAJOR_VER==3:
@@ -271,8 +270,8 @@ class Connection(object):
             size = result_size - 1
             while result_buffer[size] == '\0':
                 size -= 1
-            result = ibase.s(result_buffer[:size]) 
-            
+            result = ibase.s(result_buffer[:size])
+
         return result
     def _get_isc_info_svc_svr_db_info(self):
         num_attachments = -1
@@ -363,9 +362,9 @@ class Connection(object):
         # The core constraint here is that len(numbers) must equal len(strings) - 1
         stringsCount = len(strings)
         numbersCount = len(numbers)
-    
+
         requiredNumbersCount = stringsCount - 1
-    
+
         if numbersCount != requiredNumbersCount:
             raise ValueError(
                 'Since you passed %d %s, you must %s corresponding %s.'
@@ -380,7 +379,7 @@ class Connection(object):
     def _excludeElementsOfTypes(self, seq, theTypesToExclude):
         if not isinstance(theTypesToExclude, tuple):
             theTypesToExclude = tuple(theTypesToExclude)
-        return [element for element in seq 
+        return [element for element in seq
                 if not isinstance(element, theTypesToExclude)]
     def _requireStrOrTupleOfStr(self,x):
         if isinstance(x, ibase.mybytes):
@@ -453,7 +452,7 @@ class Connection(object):
         transIDs = []
         i = 0
         while i < nBytes:
-            byte = ord2(raw[i]) 
+            byte = ibase.ord2(raw[i])
             if byte in (ibase.isc_spb_single_tra_id, ibase.isc_spb_multi_tra_id):
                 # The transaction ID is a 32-bit integer that begins
                 # immediately after position i.
