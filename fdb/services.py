@@ -391,7 +391,7 @@ class Connection(object):
             _checkString(x)
         if ibase.PYTHON_MAJOR_VER!=3:
             for el in x:
-               _checkString(el)
+                _checkString(el)
         return x
     def _propertyAction(self, database, partialReqBuf):
         # Begin constructing the request buffer (incorporate the one passed as
