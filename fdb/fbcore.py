@@ -1001,7 +1001,7 @@ class PreparedStatement(object):
             raise exception_from_status(DatabaseError,self._isc_status,
                                   "Error while allocating SQL statement:")
         # prepare statement
-        ibase.isc_dsql_prepare(self._isc_status,self.__get_transaction()._tr_handle,
+        ibase.isc_dsql_prepare(self._isc_status, self.__get_transaction()._tr_handle,
                                self._stmt_handle,len(self._str_to_bytes(operation)),self._str_to_bytes(operation),
                                self.__get_connection().sql_dialect,
                                ctypes.cast(ctypes.pointer(self.out_sqlda),ctypes.POINTER(ibase.XSQLDA)))
@@ -1585,6 +1585,7 @@ class PreparedStatement(object):
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError,self._isc_status,
                                       "Error while releasing SQL statement handle:")
+
     def _callproc(self,procname, parameters = None):
         raise NotImplementedError('Cursor.callproc')
     def _close(self):
@@ -1645,6 +1646,7 @@ class PreparedStatement(object):
                                       "Error while executing SQL statement:")
             self.__output_cache = None
         self.__executed = True
+        self.__closed = False
         self._last_fetch_status = ibase.ISC_STATUS(self.NO_FETCH_ATTEMPTED_YET)
     def _fetchone(self):
         if self.__executed:
