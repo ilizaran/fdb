@@ -51,32 +51,32 @@ def _checkString(s):
     if ibase.PYTHON_MAJOR_VER == 3:
         try:
             if isinstance(s, str):
-                # In str instances, Python allows any character
-                # Since Firebird's
-                # Services API only works (properly) with ASCII, we need to make
-                # sure there are no non-ASCII characters in s.
+               # In str instances, Python allows any character
+               # Since Firebird's
+               # Services API only works (properly) with ASCII, we need to make
+               # sure there are no non-ASCII characters in s.
                 s.encode('ASCII')
             else:
                 raise TypeError('String argument to Services API must be'
-                        ' of type str, not %s.' % type(s)
-                      )
+                    ' of type str, not %s.' % type(s)
+                    )
         except UnicodeEncodeError:
             raise TypeError("The database engine's Services API only works"
                 " properly with ASCII string parameters, so str instances that"
                 " contain non-ASCII characters are disallowed."
-              )
+                )
     else:
         try:
             if isinstance(s, str):
-                # In str instances, Python allows any character in the "default
-                # encoding", which is typically not ASCII.  Since Firebird's
-                # Services API only works (properly) with ASCII, we need to make
-                # sure there are no non-ASCII characters in s, even though we
-                # already know s is a str instance.
+               # In str instances, Python allows any character in the "default
+               # encoding", which is typically not ASCII.  Since Firebird's
+               # Services API only works (properly) with ASCII, we need to make
+               # sure there are no non-ASCII characters in s, even though we
+               # already know s is a str instance.
                 s.encode('ASCII')
             else:
                 if isinstance(s, unicode):
-                    # Raise a more specific error message than the general case.
+                   # Raise a more specific error message than the general case.
                     raise UnicodeError
                 else:
                     raise TypeError('String argument to Services API must be'
@@ -93,7 +93,7 @@ def _checkString(s):
 def _string2spb(spb, code, s):
     sLen = len(s)
     _numeric2spb(spb, code, sLen, numCType='H')
-    format = str(sLen) + 's' # The length, then 's'.
+    format = str(sLen) + 's'  # The length, then 's'.
     spb.append(struct.pack(format, s))
 
 
@@ -161,7 +161,8 @@ def connect(host='service_mgr',
     """
 
     if password is None:
-        raise fdb.ProgrammingError('A password is required to use the Services Manager.')
+        raise fdb.ProgrammingError('A password is required to use'
+                                   ' the Services Manager.')
 
     _checkString(host)
     _checkString(user)
@@ -208,14 +209,19 @@ class Connection(object):
         self.password = self._str_to_bytes(password)
 
         if len(self.host) + len(self.user) + len(self.password) > 118:
-            raise fdb.ProgrammingError("The combined length of host,user and password can't exceed 118 bytes.")
-        spb_length = 2 + 1 + 1 + len(self.user) + 1 + 1+ len(self.password)
-        spb = fdb.bs([ibase.isc_spb_version, ibase.isc_spb_current_version, ibase.isc_spb_user_name, len(self.user)]) + \
-            self.user + fdb.bs([ibase.isc_spb_password, len(self.password)]) + self.password
-        ibase.isc_service_attach(self._isc_status, len(self.host), self.host, self._svc_handle, len(spb), spb)
+            raise fdb.ProgrammingError("The combined length of host, user and"
+                                       " password can't exceed 118 bytes.")
+        # spb_length = 2 + 1 + 1 + len(self.user) + 1 + 1 + len(self.password)
+        spb = fdb.bs([ibase.isc_spb_version, ibase.isc_spb_current_version,
+                      ibase.isc_spb_user_name, len(self.user)])
+        self.user + fdb.bs([ibase.isc_spb_password,
+                            len(self.password)]) + self.password
+        ibase.isc_service_attach(self._isc_status, len(self.host), self.host,
+                                 self._svc_handle, len(spb), spb)
         if fdb.db_api_error(self._isc_status):
-            raise fdb.exception_from_status(fdb.DatabaseError, self._isc_status,
-                                  "Services/isc_service_attach:")
+            raise fdb.exception_from_status(fdb.DatabaseError,
+                                            self._isc_status,
+                                            "Services/isc_service_attach:")
 
     def close(self):
         if self._svc_handle:
@@ -252,7 +258,9 @@ class Connection(object):
 
     def _Q(self, code, resultType, timeout=-1):
         if code < 0 or code > ibase.USHRT_MAX:
-            raise fdb.ProgrammingError("The service query request_buf code must fall between 0 and %d, inclusive." % ibase.USHRT_MAX)
+            raise fdb.ProgrammingError("The service query request_buf code"
+                                       " must fall between 0 and %d,"
+                                       " inclusive." % ibase.USHRT_MAX)
         result = None
         result_size = 1024
         request = fdb.bs([code])
@@ -262,7 +270,9 @@ class Connection(object):
             spb = fdb.bs(ibase.isc_info_svc_timeout, timeout)
         while True:
             if result_size > ibase.USHRT_MAX:
-                raise fdb.InternalError("Database C API constraints maximum result buffer size to %d" % ibase.USHRT_MAX)
+                raise fdb.InternalError("Database C API constraints maximum"
+                                        "result buffer size to %d"
+                                        % ibase.USHRT_MAX)
             result_buffer = ctypes.create_string_buffer(result_size)
             ibase.isc_service_query(self._isc_status, self._svc_handle, None,
                                     len(spb), spb,
@@ -325,7 +335,9 @@ class Connection(object):
 
     def _action_thin(self, request_buffer):
         if len(request_buffer) > ibase.USHRT_MAX:
-            raise fdb.ProgrammingError("The size of the request buffer must not exceed %d." % ibase.USHRT_MAX)
+            raise fdb.ProgrammingError("The size of the request buffer"
+                                       " must not exceed %d."
+                                       % ibase.USHRT_MAX)
         ibase.isc_service_start(self._isc_status, self._svc_handle, None,
                                 len(request_buffer), request_buffer)
         if fdb.db_api_error(self._isc_status):
@@ -424,7 +436,8 @@ class Connection(object):
     def _propertyAction(self, database, partialReqBuf):
         # Begin constructing the request buffer (incorporate the one passed as
         # param $partialReqBuf).
-        fullReqBuf = _ServiceActionRequestBuilder(ibase.isc_action_svc_properties)
+        fullReqBuf = _ServiceActionRequestBuilder(
+            ibase.isc_action_svc_properties)
         # The filename of the database must be specified regardless of the
         # action sub-action being perfomed.
         fullReqBuf.addDatabaseName(database)
@@ -437,7 +450,8 @@ class Connection(object):
         # the action.
         return self._collectUnformattedResults()
 
-    def _propertyActionWithSingleNumericCode(self, database, code, num, numCType='I'):
+    def _propertyActionWithSingleNumericCode(self, database,
+                                             code, num, numCType='I'):
         reqBuf = _ServiceActionRequestBuilder()
         reqBuf.addNumeric(code, num, numCType=numCType)
         return self._propertyAction(database, reqBuf)
@@ -493,7 +507,8 @@ class Connection(object):
         i = 0
         while i < nBytes:
             byte = ibase.ord2(raw[i])
-            if byte in (ibase.isc_spb_single_tra_id, ibase.isc_spb_multi_tra_id):
+            if byte in (ibase.isc_spb_single_tra_id,
+                        ibase.isc_spb_multi_tra_id):
                 # The transaction ID is a 32-bit integer that begins
                 # immediately after position i.
                 transID = struct.unpack('i', raw[i + 1:i + 5])[0]
@@ -569,12 +584,13 @@ class Connection(object):
         garbageCollect=1,
         transportable=1,
         convertExternalTablesToInternalTables=1,
-        expand=1 # YYY:What is this?
+        expand=1  # YYY:What is this?
       ):
         # Begin parameter validation section.
         _checkString(sourceDatabase)
         sourceDatabase = self._str_to_bytes(sourceDatabase)
-        destFilenames = self._requireStrOrTupleOfStr(self._str_to_bytes(destFilenames))
+        destFilenames = self._requireStrOrTupleOfStr(
+            self._str_to_bytes(destFilenames))
 
         destFilenamesCount = len(destFilenames)
         # 2004.07.17: YYY: Temporary warning:
@@ -592,11 +608,13 @@ class Connection(object):
             raise fdb.ProgrammingError("The database engine cannot output a"
                 " single source database to more than 9999 backup files."
               )
-        self._validateCompanionStringNumericSequences(destFilenames, destFileSizes,
+        self._validateCompanionStringNumericSequences(
+            destFilenames, destFileSizes,
             'destination filenames', 'destination file sizes'
-          )
+            )
 
-        if len(self._excludeElementsOfTypes(destFileSizes, (int, ibase.mylong ))) > 0:
+        if len(self._excludeElementsOfTypes(destFileSizes,
+                                            (int, ibase.mylong))) > 0:
             raise TypeError("Every element of destFileSizes must be an int"
                 " or long."
               )
@@ -663,12 +681,17 @@ class Connection(object):
         useAllPageSpace=0
       ):
         # Begin parameter validation section.
-        sourceFilenames = self._requireStrOrTupleOfStr(self._str_to_bytes(sourceFilenames))
-        destFilenames = self._requireStrOrTupleOfStr(self._str_to_bytes(destFilenames))
+        sourceFilenames = self._requireStrOrTupleOfStr(
+            self._str_to_bytes(sourceFilenames)
+            )
+        destFilenames = self._requireStrOrTupleOfStr(
+            self._str_to_bytes(destFilenames)
+            )
 
-        self._validateCompanionStringNumericSequences(destFilenames, destFilePages,
+        self._validateCompanionStringNumericSequences(
+            destFilenames, destFilePages,
             'destination filenames', 'destination file page counts'
-          )
+            )
         # End parameter validation section.
 
         # Begin option bitmask setup section.
@@ -876,7 +899,9 @@ class Connection(object):
             if isinstance(username, ibase.myunicode):
                 _checkString(username)
                 username = self._str_to_bytes(username)
-        reqBuf = _ServiceActionRequestBuilder(ibase.isc_action_svc_display_user)
+        reqBuf = _ServiceActionRequestBuilder(
+                                              ibase.isc_action_svc_display_user
+                                              )
         if username:
             username = username.upper()  # 2002.12.11
             reqBuf.addString(ibase.isc_spb_sec_username, username)
