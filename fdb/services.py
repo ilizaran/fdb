@@ -47,18 +47,18 @@ ACCESS_READ_WRITE = ibase.isc_spb_prp_am_readwrite
 ACCESS_READ_ONLY = ibase.isc_spb_prp_am_readonly
 
 
-def _checkString(s):
+def _checkString(st):
     if ibase.PYTHON_MAJOR_VER == 3:
         try:
-            if isinstance(s, str):
+            if isinstance(st, str):
                # In str instances, Python allows any character
                # Since Firebird's
                # Services API only works (properly) with ASCII, we need to make
                # sure there are no non-ASCII characters in s.
-                s.encode('ASCII')
+                st.encode('ASCII')
             else:
                 raise TypeError('String argument to Services API must be'
-                    ' of type str, not %s.' % type(s)
+                    ' of type str, not %s.' % type(st)
                     )
         except UnicodeEncodeError:
             raise TypeError("The database engine's Services API only works"
@@ -67,20 +67,20 @@ def _checkString(s):
                 )
     else:
         try:
-            if isinstance(s, str):
+            if isinstance(st, str):
                # In str instances, Python allows any character in the "default
                # encoding", which is typically not ASCII.  Since Firebird's
                # Services API only works (properly) with ASCII, we need to make
                # sure there are no non-ASCII characters in s, even though we
                # already know s is a str instance.
-                s.encode('ASCII')
+                st.encode('ASCII')
             else:
-                if isinstance(s, unicode):
+                if isinstance(st, unicode):
                    # Raise a more specific error message than the general case.
                     raise UnicodeError
                 else:
                     raise TypeError('String argument to Services API must be'
-                        ' of type str, not %s.' % type(s)
+                        ' of type str, not %s.' % type(st)
                       )
         except UnicodeError:
             raise TypeError("The database engine's Services API only works"
@@ -90,11 +90,11 @@ def _checkString(s):
               )
 
 
-def _string2spb(spb, code, s):
-    sLen = len(s)
-    _numeric2spb(spb, code, sLen, numCType='H')
-    format = str(sLen) + 's'  # The length, then 's'.
-    spb.append(struct.pack(format, s))
+def _string2spb(spb, code, st):
+    myslen = len(st)
+    _numeric2spb(spb, code, myslen, numCType='H')
+    myformat = str(myslen) + 's'  # The length, then 's'.
+    spb.append(struct.pack(myformat, st))
 
 
 def _numeric2spb(spb, code, num, numCType='I'):
@@ -106,20 +106,20 @@ def _numeric2spb(spb, code, num, numCType='I'):
 
 
 def _code2spb(spb, code):
-    (format, bytes) = _renderSizedIntegerForSPB(code, 'b')
-    spb.append(struct.pack(format, bytes))
+    (myformat, mybytes) = _renderSizedIntegerForSPB(code, 'b')
+    spb.append(struct.pack(myformat, mybytes))
 
 
-def _vax_inverse(i, format):
+def _vax_inverse(i, myformat):
     # Apply the inverse of _ksrv.isc_vax_integer to a Python integer; return
     # the raw bytes of the resulting value.
-    iRaw = struct.pack(format, i)
+    iRaw = struct.pack(myformat, i)
     iConv = ibase.isc_vax_integer(iRaw, len(iRaw))
-    iConvRaw = struct.pack(format, iConv)
+    iConvRaw = struct.pack(myformat, iConv)
     return iConvRaw
 
 
-def _renderSizedIntegerForSPB(i, format):
+def _renderSizedIntegerForSPB(i, myformat):
     #   In order to prepare the Python integer i for inclusion in a Services
     # API action request buffer, the byte sequence of i must be reversed, which
     # will make i unrepresentible as a normal Python integer.
@@ -136,8 +136,8 @@ def _renderSizedIntegerForSPB(i, format):
     #   (iPackFormat, iRawBytes) = _renderSizedIntegerForSPB(12345, 'I')
     #   spbBytes = struct.pack(iPackFormat, iRawBytes)
     #
-    destFormat = '%ds' % struct.calcsize(format)
-    destVal = _vax_inverse(i, format)
+    destFormat = '%ds' % struct.calcsize(myformat)
+    destVal = _vax_inverse(i, myformat)
     return (destFormat, destVal)
 
 
@@ -231,17 +231,17 @@ class Connection(object):
                               self._isc_status, "Services/isc_service_detach:")
             self._svc_handle = None
 
-    def _bytes_to_str(self, b):
+    def _bytes_to_str(self, sb):
         if ibase.PYTHON_MAJOR_VER == 3:
-            return b.decode(ibase.charset_map.get(self.charset, self.charset))
+            return sb.decode(ibase.charset_map.get(self.charset, self.charset))
         else:
-            return b.encode(ibase.charset_map.get(self.charset, self.charset))
+            return sb.encode(ibase.charset_map.get(self.charset, self.charset))
 
-    def _str_to_bytes(self, s):
+    def _str_to_bytes(self, st):
         if ibase.PYTHON_MAJOR_VER == 3:
-            return s.encode(ibase.charset_map.get(self.charset, self.charset))
+            return st.encode(ibase.charset_map.get(self.charset, self.charset))
         else:
-            return s
+            return st
 
     def _extract_int(self, raw, index):
         new_index = index + ctypes.sizeof(ctypes.c_ushort)

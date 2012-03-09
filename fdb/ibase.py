@@ -41,17 +41,17 @@ else:
 #-------------------
 
 if PYTHON_MAJOR_VER == 3:
-    def b(s):
-        if s == None:
-            return s
+    def b(st):
+        if st == None:
+            return st
         else:
             try:
-                return s.encode("latin-1")
-            except:
-                return s
+                return st.encode("latin-1")
+            except UnicodeEncodeError:
+                return st
 
-    def s(s):
-        return s
+    def s(st):
+        return st
 
     ord2 = lambda x: x
 
@@ -78,8 +78,8 @@ if PYTHON_MAJOR_VER == 3:
     xrange = range
 
 else:
-    def b(s):
-        return s
+    def b(st):
+        return st
 
     int2byte = chr
     s = str
@@ -905,6 +905,7 @@ ISC_ARRAY_BOUND._fields_ = [
     ('array_bound_lower', c_short),
     ('array_bound_upper', c_short),
 ]
+
 
 class ISC_ARRAY_DESC(Structure):
     pass
@@ -1980,7 +1981,7 @@ __all__ = ['isc_info_base_level', 'isc_start_and_send',
            'isc_info_ppage_errors', 'isc_info_db_last_value',
            'isc_get_client_minor_version', 'isc_embed_dsql_close',
            'isc_callback', 'bstream', 'isc_array_gen_sdl',
-           'isc_reset_fpe', 'isc_info_db_code_firebird',
+           'isc_info_db_code_firebird',
            'isc_req_handle', 'isc_info_db_class_sam_srvr',
            'frb_info_att_charset', 'isc_info_attachment_id',
            'paramvary', 'USER_SEC_DATA',

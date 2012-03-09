@@ -34,6 +34,7 @@ class TestCreateDrop(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'droptest.fdb')
+        self.dbfile = '/tmp/droptest.fdb'
     def test_create_drop(self):
         con = fdb.create_database("create database '"+self.dbfile+"' user 'sysdba' password 'masterkey'")
         con.drop_database()
@@ -43,13 +44,14 @@ class TestConnection(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
     def tearDown(self):
         pass
     def test_connect(self):
         con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         assert con._db_handle != None
         if ibase.PYTHON_MAJOR_VER==3:
-            assert con._dpb == b'\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x030\x04UTF8'       
+            assert con._dpb == b'\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x030\x04UTF8'
         else:
             assert con._dpb == '\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x030\x04UTF8'
         con.close()
@@ -113,6 +115,7 @@ class TestTransaction(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
         self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
         #self.con.commit()
@@ -166,6 +169,7 @@ class TestCursor(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
         if ibase.PYTHON_MAJOR_VER==3:
             self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         else:
@@ -219,6 +223,29 @@ class TestCursor(unittest.TestCase):
         assert repr(rows) == "[('Netherlands', 'Guilder'), ('Belgium', 'BFranc'), ('Austria', 'Schilling'), ('Fiji', 'FDollar')]"
         rows = cur.fetchmany(10)
         assert len(rows) == 0
+    def test_fetchonemap(self):
+        cur = self.con.cursor()
+        cur.execute('select * from country')
+        row = cur.fetchonemap()
+        assert len(row) == 2
+        assert repr(row.items()) == "[('COUNTRY', 'USA'), ('CURRENCY', 'Dollar')]"
+    def test_fetchallmap(self):
+        cur = self.con.cursor()
+        cur.execute('select * from country')
+        rows = cur.fetchallmap()
+        assert len(rows) == 14
+        assert repr([row.items() for row in rows]) == "[[('COUNTRY', 'USA'), ('CURRENCY', 'Dollar')], [('COUNTRY', 'England'), ('CURRENCY', 'Pound')], [('COUNTRY', 'Canada'), ('CURRENCY', 'CdnDlr')], [('COUNTRY', 'Switzerland'), ('CURRENCY', 'SFranc')], [('COUNTRY', 'Japan'), ('CURRENCY', 'Yen')], [('COUNTRY', 'Italy'), ('CURRENCY', 'Lira')], [('COUNTRY', 'France'), ('CURRENCY', 'FFranc')], [('COUNTRY', 'Germany'), ('CURRENCY', 'D-Mark')], [('COUNTRY', 'Australia'), ('CURRENCY', 'ADollar')], [('COUNTRY', 'Hong Kong'), ('CURRENCY', 'HKDollar')], [('COUNTRY', 'Netherlands'), ('CURRENCY', 'Guilder')], [('COUNTRY', 'Belgium'), ('CURRENCY', 'BFranc')], [('COUNTRY', 'Austria'), ('CURRENCY', 'Schilling')], [('COUNTRY', 'Fiji'), ('CURRENCY', 'FDollar')]]"
+    def test_fetchmanymap(self):
+        cur = self.con.cursor()
+        cur.execute('select * from country')
+        rows = cur.fetchmanymap(10)
+        assert len(rows) == 10
+        assert repr([row.items() for row in rows]) == "[[('COUNTRY', 'USA'), ('CURRENCY', 'Dollar')], [('COUNTRY', 'England'), ('CURRENCY', 'Pound')], [('COUNTRY', 'Canada'), ('CURRENCY', 'CdnDlr')], [('COUNTRY', 'Switzerland'), ('CURRENCY', 'SFranc')], [('COUNTRY', 'Japan'), ('CURRENCY', 'Yen')], [('COUNTRY', 'Italy'), ('CURRENCY', 'Lira')], [('COUNTRY', 'France'), ('CURRENCY', 'FFranc')], [('COUNTRY', 'Germany'), ('CURRENCY', 'D-Mark')], [('COUNTRY', 'Australia'), ('CURRENCY', 'ADollar')], [('COUNTRY', 'Hong Kong'), ('CURRENCY', 'HKDollar')]]"
+        rows = cur.fetchmanymap(10)
+        assert len(rows) == 4
+        assert repr([row.items() for row in rows]) == "[[('COUNTRY', 'Netherlands'), ('CURRENCY', 'Guilder')], [('COUNTRY', 'Belgium'), ('CURRENCY', 'BFranc')], [('COUNTRY', 'Austria'), ('CURRENCY', 'Schilling')], [('COUNTRY', 'Fiji'), ('CURRENCY', 'FDollar')]]"
+        rows = cur.fetchmany(10)
+        assert len(rows) == 0
     def test_rowcount(self):
         cur = self.con.cursor()
         assert cur.rowcount == -1
@@ -242,6 +269,7 @@ class TestPreparedStatement(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
         if ibase.PYTHON_MAJOR_VER==3:
             self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         else:
@@ -265,12 +293,13 @@ class TestPreparedStatement(unittest.TestCase):
         cur = self.con.cursor()
         ps = cur.prep('select * from country')
         assert ps.plan == "PLAN (COUNTRY NATURAL)"
-        
+
 class TestCursor2(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
         if ibase.PYTHON_MAJOR_VER==3:
             self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         else:
@@ -291,7 +320,7 @@ class TestCursor2(unittest.TestCase):
         cur.execute('select C1,C2,C3 from T2 where C1 = 1')
         rows = cur.fetchall()
         assert repr(rows) == "[(1, 1, 1)]"
-    def test_insert_char_varchar(self):    
+    def test_insert_char_varchar(self):
         cur = self.con.cursor()
         cur.execute('insert into T2 (C1,C4,C5) values (?,?,?)',[2,'AA','AA'])
         self.con.commit()
@@ -334,6 +363,7 @@ class TestStoredProc(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
         if ibase.PYTHON_MAJOR_VER==3:
             self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         else:
@@ -356,6 +386,7 @@ class TestServices(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
     def test_attach(self):
         svc = fdb.services.connect(password='masterkey')
         svc.close()
@@ -393,6 +424,7 @@ class TestServices2(unittest.TestCase):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.dbfile = '/tmp/fbtest.fdb'
         self.svc = fdb.services.connect(password='masterkey')
     def tearDown(self):
         self.svc.close()
@@ -408,48 +440,48 @@ class TestServices2(unittest.TestCase):
         assert stat
         assert isinstance(stat,str)
     def test_backup(self):
-        log = self.svc.backup('employee','test_employee.fbk')
+        log = self.svc.backup('employee','/tmp/test_employee.fbk')
         assert log
         assert isinstance(log,str)
     def test_restore(self):
-        log = self.svc.restore('test_employee.fbk','test_employee.fdb',replace=1)
+        log = self.svc.restore('/tmp/test_employee.fbk','/tmp/test_employee.fdb',replace=1)
         assert log
         assert isinstance(log,str)
     def test_setDefaultPageBuffers(self):
-        result = self.svc.setDefaultPageBuffers('test_employee.fdb',100)
+        result = self.svc.setDefaultPageBuffers('/tmp/test_employee.fdb',100)
         assert not result
     def test_setSweepInterval(self):
-        result = self.svc.setSweepInterval('test_employee.fdb',10000)
+        result = self.svc.setSweepInterval('/tmp/test_employee.fdb',10000)
         assert not result
     def test_shutdown_bringOnline(self):
-        result = self.svc.shutdown('test_employee.fdb',fdb.services.SHUT_FORCE,0)
+        result = self.svc.shutdown('/tmp/test_employee.fdb',fdb.services.SHUT_FORCE,0)
         assert not result
-        result = self.svc.bringOnline('test_employee.fdb')
+        result = self.svc.bringOnline('/tmp/test_employee.fdb')
         assert not result
     def test_setShouldReservePageSpace(self):
-        result = self.svc.setShouldReservePageSpace('test_employee.fdb',False)
+        result = self.svc.setShouldReservePageSpace('/tmp/test_employee.fdb',False)
         assert not result
     def test_setWriteMode(self):
-        result = self.svc.setWriteMode('test_employee.fdb',fdb.services.WRITE_BUFFERED)
+        result = self.svc.setWriteMode('/tmp/test_employee.fdb',fdb.services.WRITE_BUFFERED)
         assert not result
     def test_setAccessMode(self):
-        result = self.svc.setAccessMode('test_employee.fdb',fdb.services.ACCESS_READ_ONLY)
+        result = self.svc.setAccessMode('/tmp/test_employee.fdb',fdb.services.ACCESS_READ_ONLY)
         assert not result
-        result = self.svc.setAccessMode('test_employee.fdb',fdb.services.ACCESS_READ_WRITE)
+        result = self.svc.setAccessMode('/tmp/test_employee.fdb',fdb.services.ACCESS_READ_WRITE)
         assert not result
     def test_setSQLDialect(self):
-        result = self.svc.setSQLDialect('test_employee.fdb',1)
+        result = self.svc.setSQLDialect('/tmp/test_employee.fdb',1)
         assert not result
         #result = self.svc.setSQLDialect('test_employee.fdb',3)
         #assert not result
     def test_activateShadowFile(self):
-        result = self.svc.activateShadowFile('test_employee.fdb')
+        result = self.svc.activateShadowFile('/tmp/test_employee.fdb')
         assert not result
     def test_sweep(self):
-        result = self.svc.sweep('test_employee.fdb')
+        result = self.svc.sweep('/tmp/test_employee.fdb')
         assert not result
     def test_repair(self):
-        result = self.svc.repair('test_employee.fdb')
+        result = self.svc.repair('/tmp/test_employee.fdb')
         assert not result
     def test_getUsers(self):
         users = self.svc.getUsers()
@@ -489,11 +521,11 @@ class TestServices2(unittest.TestCase):
         assert users[0].lastName == 'XTEST'
         result = self.svc.removeUser(user)
         assert not result
-        
-        
+
+
 if __name__ == '__main__':
     unittest.main()
-    
+
 #unittest.main()
 #import datetime as dt
 #con = fdb.connect(dsn='employee',user='sysdba',password='masterkey')
