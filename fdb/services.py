@@ -808,20 +808,59 @@ class Connection(object):
         return self._act(request)
 
     # Trace
-    def trace_start(self, name=None, cfg=None, callback=None):
-        pass
+    def trace_start(self, cfg=None, name=None, callback=None):
+        if not name == None:
+            _checkString(name)
+        _checkString(cfg)
+        # Construct the request buffer.
+        reqBuf = _ServiceActionRequestBuilder(ibase.isc_action_svc_trace_start)
+        # trace name:
+        if not name == None:
+            reqBuf.addString(ibase.isc_spb_trc_name, name)
+        # trace configuration:
+        reqBuf.addString(ibase.isc_spb_trc_cfg, cfg)
+        if callback:
+            return self._actAndReturnTextualResults(reqBuf)
+        else:
+            return self._act(reqBuf)
 
     def trace_stop(self, trace_id, callback=None):
-        pass
+        # Construct the request buffer.
+        reqBuf = _ServiceActionRequestBuilder(ibase.isc_action_svc_trace_stop)
+        reqBuf.addNumeric(ibase.isc_spb_trc_id, trace_id)
+        # Return the results to the caller synchronously.
+        if callback:
+            return self._actAndReturnTextualResults(reqBuf)
+        else:
+            return self._act(reqBuf)
 
     def trace_suspend(self, trace_id, callback=None):
-        pass
+        # Construct the request buffer.
+        reqBuf = _ServiceActionRequestBuilder(
+                                            ibase.isc_action_svc_trace_suspend)
+        reqBuf.addNumeric(ibase.isc_spb_trc_id, trace_id)
+        # Return the results to the caller synchronously.
+        if callback:
+            return self._actAndReturnTextualResults(reqBuf)
+        else:
+            return self._act(reqBuf)
 
     def trace_resume(self, trace_id, callback=None):
-        pass
+        # Construct the request buffer.
+        reqBuf = _ServiceActionRequestBuilder(
+                                             ibase.isc_action_svc_trace_resume)
+        reqBuf.addNumeric(ibase.isc_spb_trc_id, trace_id)
+        # Return the results to the caller synchronously.
+        if callback:
+            return self._actAndReturnTextualResults(reqBuf)
+        else:
+            return self._act(reqBuf)
 
     def trace_list(self):
-        pass
+        # Construct the request buffer.
+        reqBuf = _ServiceActionRequestBuilder(ibase.isc_action_svc_trace_list)
+        # Return the results to the caller synchronously.
+        return self._actAndReturnTextualResults(reqBuf)
 
     # Database property alteration methods:
 

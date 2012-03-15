@@ -866,6 +866,11 @@ isc_info_wal_recv_ckpt_poffset = 45
 isc_info_ods_version = 32
 isc_info_db_impl_isc_sgi = 41
 
+# trace
+isc_spb_trc_id = 1
+isc_spb_trc_name = 2
+isc_spb_trc_cfg = 3
+
 # status codes
 isc_segment = 335544366
 
