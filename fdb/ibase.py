@@ -44,6 +44,8 @@ if PYTHON_MAJOR_VER == 3:
     def b(st):
         if st == None:
             return st
+        elif isinstance(st, bytes):
+            return st
         else:
             try:
                 return st.encode("latin-1")
