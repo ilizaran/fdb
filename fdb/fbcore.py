@@ -2199,7 +2199,8 @@ class Transaction(object):
             TebArrayType = ibase.ISC_TEB * len(self._connections)
             teb_array = TebArrayType()
             for i in list(range(len(self._connections))):
-                teb_array[i].db_ptr = self._connections[i]()._db_handle
+                teb_array[i].db_ptr = ctypes.pointer(
+                                             self._connections[i]()._db_handle)
                 teb_array[i].tpb_len = len(_tpb)
                 teb_array[i].tpb_ptr = _tpb
             ibase.isc_start_multiple(self._isc_status, self._tr_handle,
@@ -2210,9 +2211,6 @@ class Transaction(object):
                 self._tr_handle = None
                 raise exception_from_status(DatabaseError, self._isc_status,
                                       "Error while starting transaction:")
-#            self._tr_handle = None
-#            raise NotImplementedError("Transaction.begin(multiple"
-#                                      " connections)")
         elif len(self._connections) > 16:
             self._tr_handle = None
             raise ProgrammingError("Transaction.begin don't accept"
