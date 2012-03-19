@@ -1065,6 +1065,15 @@ XSQLDA._fields_ = [
     ('sqlvar', XSQLVAR * 1),
 ]
 
+
+class ISC_TEB(Structure):
+    pass
+ISC_TEB._fields_ = [
+    ('db_ptr', POINTER(isc_db_handle)),
+    ('tpb_len', c_short),
+    ('tpb_ptr', STRING)
+]
+
 isc_attach_database = fb_library.isc_attach_database
 isc_attach_database.restype = ISC_STATUS
 isc_attach_database.argtypes = [POINTER(ISC_STATUS), c_short, STRING,
