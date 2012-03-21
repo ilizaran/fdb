@@ -33,8 +33,8 @@ class TestCreateDrop(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'droptest.fdb')
-        self.dbfile = '/tmp/droptest.fdb'
     def test_create_drop(self):
         con = fdb.create_database("create database '"+self.dbfile+"' user 'sysdba' password 'masterkey'")
         con.drop_database()
@@ -43,17 +43,17 @@ class TestConnection(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
     def tearDown(self):
         pass
     def test_connect(self):
         con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         assert con._db_handle != None
-        if ibase.PYTHON_MAJOR_VER==3:
-            assert con._dpb == b'\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x030\x04UTF8'
+        if ibase.PYTHON_MAJOR_VER == 3:
+            assert con._dpb.decode('utf8') == '\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x03'
         else:
-            assert con._dpb == '\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x030\x04UTF8'
+            assert con._dpb == '\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x03'
         con.close()
     def test_connect_role(self):
         con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey',role='role')
@@ -114,8 +114,8 @@ class TestTransaction(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
         self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
         #self.con.commit()
@@ -164,16 +164,104 @@ class TestTransaction(unittest.TestCase):
         assert info == '\x08\x02\x00\x03\x01'
         tr.commit()
 
+class TestDistributedTransaction(unittest.TestCase):
+    def setUp(self):
+        self.cwd = os.getcwd()
+        self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
+        self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.db1 = os.path.join(self.dbpath,'fbtest-1.fdb')
+        self.db2 = os.path.join(self.dbpath,'fbtest-2.fdb')
+        if not os.path.exists(self.db1):
+            self.con1 = fdb.create_database("CREATE DATABASE '%s' USER 'SYSDBA' PASSWORD 'masterkey'" % self.db1)
+        else:
+            self.con1 = fdb.connect(dsn=self.db1,user='SYSDBA',password='masterkey')
+        self.con1.execute_immediate("recreate table T (PK integer, C1 integer)")
+        self.con1.commit()
+        if not os.path.exists(self.db2):
+            self.con2 = fdb.create_database("CREATE DATABASE '%s' USER 'SYSDBA' PASSWORD 'masterkey'" % self.db2)
+        else:
+            self.con2 = fdb.connect(dsn=self.db2,user='SYSDBA',password='masterkey')
+        self.con2.execute_immediate("recreate table T (PK integer, C1 integer)")
+        self.con2.commit()
+    def tearDown(self):
+        if self.con1.group:
+            # We can't drop database via connection in group
+            self.con1.group.disband()
+        self.con1.drop_database()
+        self.con1.close()
+        self.con2.drop_database()
+        self.con2.close()
+    def test_simple_dt(self):
+        cg = fdb.ConnectionGroup((self.con1,self.con2))
+        assert self.con1.group == cg
+        assert self.con2.group == cg
+
+        c1 = cg.cursor(self.con1)
+        cc1 = self.con1.cursor()
+        p1 = cc1.prep('select * from T order by pk')
+
+        c2 = cg.cursor(self.con2)
+        cc2 = self.con2.cursor()
+        p2 = cc2.prep('select * from T order by pk')
+
+        c1.execute('insert into t (pk) values (1)')
+        c2.execute('insert into t (pk) values (1)')
+        cg.commit()
+
+        self.con1.commit()
+        cc1.execute(p1)
+        result = cc1.fetchall()
+        #print 'db1:',result
+        assert repr(result) == '[(1, None)]'
+        self.con2.commit()
+        cc2.execute(p2)
+        result = cc2.fetchall()
+        #print 'db2:',result
+        assert repr(result) == '[(1, None)]'
+
+        c1.execute('insert into t (pk) values (2)')
+        c2.execute('insert into t (pk) values (2)')
+        cg.prepare()
+        cg.commit()
+
+        self.con1.commit()
+        cc1.execute(p1)
+        result = cc1.fetchall()
+        #print 'db1:',result
+        assert repr(result) == '[(1, None), (2, None)]'
+        self.con2.commit()
+        cc2.execute(p2)
+        result = cc2.fetchall()
+        #print 'db2:',result
+        assert repr(result) == '[(1, None), (2, None)]'
+
+        c1.execute('insert into t (pk) values (3)')
+        c2.execute('insert into t (pk) values (3)')
+        cg.rollback()
+
+        self.con1.commit()
+        cc1.execute(p1)
+        result = cc1.fetchall()
+        #print 'db1:',result
+        assert repr(result) == '[(1, None), (2, None)]'
+        self.con2.commit()
+        cc2.execute(p2)
+        result = cc2.fetchall()
+        #print 'db2:',result
+        assert repr(result) == '[(1, None), (2, None)]'
+
+        cg.disband()
+        assert self.con1.group == None
+        assert self.con2.group == None
+
 class TestCursor(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
-        if ibase.PYTHON_MAJOR_VER==3:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
-        else:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey',charset=None)
+        self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
         #self.con.commit()
     def tearDown(self):
@@ -211,6 +299,7 @@ class TestCursor(unittest.TestCase):
         cur.execute('select * from country')
         rows = cur.fetchall()
         assert len(rows) == 14
+        print(repr(rows))
         assert repr(rows) == "[('USA', 'Dollar'), ('England', 'Pound'), ('Canada', 'CdnDlr'), ('Switzerland', 'SFranc'), ('Japan', 'Yen'), ('Italy', 'Lira'), ('France', 'FFranc'), ('Germany', 'D-Mark'), ('Australia', 'ADollar'), ('Hong Kong', 'HKDollar'), ('Netherlands', 'Guilder'), ('Belgium', 'BFranc'), ('Austria', 'Schilling'), ('Fiji', 'FDollar')]"
     def test_fetchmany(self):
         cur = self.con.cursor()
@@ -268,12 +357,9 @@ class TestPreparedStatement(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
-        if ibase.PYTHON_MAJOR_VER==3:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
-        else:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey',charset=None)
+        self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
         #self.con.commit()
     def tearDown(self):
@@ -298,12 +384,9 @@ class TestCursor2(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
-        if ibase.PYTHON_MAJOR_VER==3:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
-        else:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey',charset=None)
+        self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
         #self.con.commit()
         #self.con.execute_immediate("RECREATE TABLE T2 (C1 Smallint,C2 Integer,C3 Bigint,C4 Char(5),C5 Varchar(10),C6 Date,C7 Time,C8 Timestamp,C9 Blob sub_type 1,C10 Numeric(18,2),C11 Decimal(18,2),C12 Float,C13 Double precision,C14 Numeric(8,4),C15 Decimal(8,4))")
@@ -362,12 +445,9 @@ class TestStoredProc(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
-        if ibase.PYTHON_MAJOR_VER==3:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
-        else:
-            self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey',charset=None)
+        self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
     def tearDown(self):
         self.con.close()
     def test_callproc(self):
@@ -385,8 +465,8 @@ class TestServices(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
     def test_attach(self):
         svc = fdb.services.connect(password='masterkey')
         svc.close()
@@ -401,7 +481,7 @@ class TestServices(unittest.TestCase):
         x = svc.getHomeDir()
         #assert x == '/opt/firebird/'
         x = svc.getSecurityDatabasePath()
-        assert 'security2.fdb' in '/opt/firebird/security2.fdb'
+        assert 'security2.fdb' in '/opt/firebird25/security2.fdb'
         x = svc.getLockFileDir()
         #assert x == '/tmp/firebird/'
         x = svc.getCapabilityMask()
@@ -423,11 +503,19 @@ class TestServices2(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
+        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
-        self.dbfile = '/tmp/fbtest.fdb'
+        self.fbk = os.path.join(self.dbpath,'test_employee.fbk')
+        self.rfdb = os.path.join(self.dbpath,'test_employee.fdb')
         self.svc = fdb.services.connect(password='masterkey')
+        c = fdb.create_database("CREATE DATABASE '%s' USER 'SYSDBA' PASSWORD 'masterkey'" % self.rfdb)
+        c.close()
     def tearDown(self):
         self.svc.close()
+        if os.path.exists(self.rfdb):
+            os.remove(self.rfdb)
+        if os.path.exists(self.fbk):
+            os.remove(self.fbk)
     def test_log(self):
         log = self.svc.getLog()
         assert log
@@ -440,48 +528,49 @@ class TestServices2(unittest.TestCase):
         assert stat
         assert isinstance(stat,str)
     def test_backup(self):
-        log = self.svc.backup('employee','/tmp/test_employee.fbk')
+        log = self.svc.backup('employee',self.fbk)
         assert log
         assert isinstance(log,str)
     def test_restore(self):
-        log = self.svc.restore('/tmp/test_employee.fbk','/tmp/test_employee.fdb',replace=1)
+        self.test_backup()
+        log = self.svc.restore(self.fbk,self.rfdb,replace=1)
         assert log
         assert isinstance(log,str)
     def test_setDefaultPageBuffers(self):
-        result = self.svc.setDefaultPageBuffers('/tmp/test_employee.fdb',100)
+        result = self.svc.setDefaultPageBuffers(self.rfdb,100)
         assert not result
     def test_setSweepInterval(self):
-        result = self.svc.setSweepInterval('/tmp/test_employee.fdb',10000)
+        result = self.svc.setSweepInterval(self.rfdb,10000)
         assert not result
     def test_shutdown_bringOnline(self):
-        result = self.svc.shutdown('/tmp/test_employee.fdb',fdb.services.SHUT_FORCE,0)
+        result = self.svc.shutdown(self.rfdb,fdb.services.SHUT_FORCE,0)
         assert not result
-        result = self.svc.bringOnline('/tmp/test_employee.fdb')
+        result = self.svc.bringOnline(self.rfdb)
         assert not result
     def test_setShouldReservePageSpace(self):
-        result = self.svc.setShouldReservePageSpace('/tmp/test_employee.fdb',False)
+        result = self.svc.setShouldReservePageSpace(self.rfdb,False)
         assert not result
     def test_setWriteMode(self):
-        result = self.svc.setWriteMode('/tmp/test_employee.fdb',fdb.services.WRITE_BUFFERED)
+        result = self.svc.setWriteMode(self.rfdb,fdb.services.WRITE_BUFFERED)
         assert not result
     def test_setAccessMode(self):
-        result = self.svc.setAccessMode('/tmp/test_employee.fdb',fdb.services.ACCESS_READ_ONLY)
+        result = self.svc.setAccessMode(self.rfdb,fdb.services.ACCESS_READ_ONLY)
         assert not result
-        result = self.svc.setAccessMode('/tmp/test_employee.fdb',fdb.services.ACCESS_READ_WRITE)
+        result = self.svc.setAccessMode(self.rfdb,fdb.services.ACCESS_READ_WRITE)
         assert not result
     def test_setSQLDialect(self):
-        result = self.svc.setSQLDialect('/tmp/test_employee.fdb',1)
+        result = self.svc.setSQLDialect(self.rfdb,1)
         assert not result
         #result = self.svc.setSQLDialect('test_employee.fdb',3)
         #assert not result
     def test_activateShadowFile(self):
-        result = self.svc.activateShadowFile('/tmp/test_employee.fdb')
+        result = self.svc.activateShadowFile(self.rfdb)
         assert not result
     def test_sweep(self):
-        result = self.svc.sweep('/tmp/test_employee.fdb')
+        result = self.svc.sweep(self.rfdb)
         assert not result
     def test_repair(self):
-        result = self.svc.repair('/tmp/test_employee.fdb')
+        result = self.svc.repair(self.rfdb)
         assert not result
     def test_getUsers(self):
         users = self.svc.getUsers()

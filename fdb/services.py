@@ -48,6 +48,7 @@ ACCESS_READ_ONLY = ibase.isc_spb_prp_am_readonly
 
 
 def _checkString(st):
+    ### Todo: verify handling of P version differences, refactor
     if ibase.PYTHON_MAJOR_VER == 3:
         try:
             if isinstance(st, str):
@@ -200,7 +201,7 @@ class Connection(object):
     QUERY_TYPE_PLAIN_STRING = 2
     QUERY_TYPE_RAW = 3
 
-    def __init__(self, host, user, password, charset=ibase.DEFAULT_CHARSET):
+    def __init__(self, host, user, password, charset=None):
         self._svc_handle = ibase.isc_svc_handle(0)
         self._isc_status = ibase.ISC_STATUS_ARRAY()
         self.charset = charset
@@ -238,6 +239,7 @@ class Connection(object):
     def _extract_string(self, raw, index):
         (size, index) = self._extract_int(raw, index)
         new_index = index + size
+        ### Todo: verify handling of P version differences, refactor
         if ibase.PYTHON_MAJOR_VER == 3:
             return (str(raw[index:new_index],
                  ibase.charset_map.get(self.charset, self.charset)), new_index)
@@ -1220,6 +1222,7 @@ class _ServiceActionRequestBuilder(object):
         # because it will cause isc_service_start to raise an inscrutable error
         # message with Firebird 1.5 (though it would not have raised an error
         # at all with Firebird 1.0 and earlier).
+        ### Todo: verify handling of P version differences, refactor
         if ibase.PYTHON_MAJOR_VER == 3:
             colonIndex = (databaseName.decode('utf_8')).find(':')
         else:
