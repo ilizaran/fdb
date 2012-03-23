@@ -232,6 +232,20 @@ class Connection(object):
                               self._isc_status, "Services/isc_service_detach:")
             self._svc_handle = None
 
+    def _bytes_to_str(self, sb):
+        ### Todo: verify handling of P version differences, refactor
+        if ibase.PYTHON_MAJOR_VER == 3:
+            return sb.decode(ibase.charset_map.get(self.charset, self.charset))
+        else:
+            return sb.encode(ibase.charset_map.get(self.charset, self.charset))
+
+    def _str_to_bytes(self, st):
+        ### Todo: verify handling of P version differences, refactor
+        if ibase.PYTHON_MAJOR_VER == 3:
+            return st.encode(ibase.charset_map.get(self.charset, self.charset))
+        else:
+            return st
+
     def _extract_int(self, raw, index):
         new_index = index + ctypes.sizeof(ctypes.c_ushort)
         return (fdb.bytes_to_int(raw[index:new_index]), new_index)
@@ -418,6 +432,7 @@ class Connection(object):
           # but calling it anyway allows us to centralize the error message
           # generation:
             _checkString(x)
+        ### Todo: verify handling of P version differences, refactor?
         for el in x:
             _checkString(el)
         return x

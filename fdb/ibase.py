@@ -1051,7 +1051,6 @@ ISC_TEB._fields_ = [
     ('tpb_ptr', STRING)
 ]
 
-
 class XSQLVAR(Structure):
     pass
 XSQLVAR._fields_ = [
@@ -1083,6 +1082,7 @@ XSQLDA._fields_ = [
     ('sqlvar', XSQLVAR * 1),
 ]
 
+XSQLDA_PTR = POINTER(XSQLDA)
 
 isc_attach_database = fb_library.isc_attach_database
 isc_attach_database.restype = ISC_STATUS
@@ -1475,7 +1475,6 @@ isc_portable_integer.argtypes = [POINTER(ISC_UCHAR), c_short]
 
 def portable_int (buf):
     pass
-
 
 class USER_SEC_DATA(Structure):
     pass
@@ -2106,3 +2105,4 @@ __all__ = ['isc_info_base_level', 'isc_start_and_send',
            'isc_info_db_impl_isc_rt_aix',
            'isc_get_client_major_version', 'isc_dsql_fetch',
            'isc_info_update_count', 'int_least8_t']
+

@@ -76,13 +76,12 @@ class TestConnection(unittest.TestCase):
         assert con.main_transaction.closed
         con.begin()
         con.commit(retaining=True)
-        assert con.main_transaction.closed
-        con.begin()
+        assert not con.main_transaction.closed
         con.rollback(retaining=True)
-        assert con.main_transaction.closed
+        assert not con.main_transaction.closed
         tr = con.trans()
         assert isinstance(tr,fdb.Transaction)
-        assert con.main_transaction.closed
+        assert not con.main_transaction.closed
         assert len(con.transactions) == 2
         tr.begin()
         assert not tr.closed
@@ -299,7 +298,6 @@ class TestCursor(unittest.TestCase):
         cur.execute('select * from country')
         rows = cur.fetchall()
         assert len(rows) == 14
-        print(repr(rows))
         assert repr(rows) == "[('USA', 'Dollar'), ('England', 'Pound'), ('Canada', 'CdnDlr'), ('Switzerland', 'SFranc'), ('Japan', 'Yen'), ('Italy', 'Lira'), ('France', 'FFranc'), ('Germany', 'D-Mark'), ('Australia', 'ADollar'), ('Hong Kong', 'HKDollar'), ('Netherlands', 'Guilder'), ('Belgium', 'BFranc'), ('Austria', 'Schilling'), ('Fiji', 'FDollar')]"
     def test_fetchmany(self):
         cur = self.con.cursor()
@@ -475,13 +473,13 @@ class TestServices(unittest.TestCase):
         x = svc.getServiceManagerVersion()
         assert x == 2
         x = svc.getServerVersion()
-        assert 'Firebird' in 'LI-V2.5.0.26074 Firebird 2.5'
+        assert 'Firebird' in x
         x = svc.getArchitecture()
-        assert 'Firebird' in 'Firebird/linux AMD64'
+        assert 'Firebird' in x
         x = svc.getHomeDir()
         #assert x == '/opt/firebird/'
         x = svc.getSecurityDatabasePath()
-        assert 'security2.fdb' in '/opt/firebird25/security2.fdb'
+        assert 'security2.fdb' in x
         x = svc.getLockFileDir()
         #assert x == '/tmp/firebird/'
         x = svc.getCapabilityMask()
@@ -490,13 +488,12 @@ class TestServices(unittest.TestCase):
         #assert x == '/opt/firebird/'
         con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         con2 = fdb.connect(dsn='employee',user='sysdba',password='masterkey')
-        x = svc.getConnectionCount()
-        #print('getConnectionCount',x)
-        #assert x == 3
         x = svc.getAttachedDatabaseNames()
         #assert len(x) == 2
         #assert self.dbfile in x
         #assert '/opt/firebird/examples/empbuild/employee.fdb' in x
+        x = svc.getConnectionCount()
+        #assert x == 3
         svc.close()
 
 class TestServices2(unittest.TestCase):
