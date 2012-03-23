@@ -673,11 +673,7 @@ class Connection(object):
         if ibase.PYTHON_MAJOR_VER == 3:
             return b.decode(ibase.charset_map.get(self.charset, self.charset))
         else:
-            if self.charset:
-                return b.decode(ibase.charset_map.get(self.charset,
-                                                      self.charset))
-            else:
-                return b
+            return b
 
     def _str_to_bytes(self, s):
         if ibase.PYTHON_MAJOR_VER == 3:
@@ -1390,10 +1386,7 @@ class PreparedStatement(object):
                     scale = sqlvar.sqlscale
                     precision = 0
                     if vartype in [ibase.SQL_TEXT, ibase.SQL_VARYING]:
-                        if self.__get_connection().charset:
-                            vtype = ibase.UnicodeType
-                        else:
-                            vtype = ibase.StringType
+                        vtype = ibase.StringType
                         dispsize = sqlvar.sqllen
                     elif (vartype in [ibase.SQL_SHORT, ibase.SQL_LONG,
                                       ibase.SQL_INT64]
@@ -1424,10 +1417,7 @@ class PreparedStatement(object):
                         dispsize = 17
                     elif vartype == ibase.SQL_BLOB:
                         scale = sqlvar.sqlsubtype
-                        if self.__get_connection().charset:
-                            vtype = ibase.UnicodeType
-                        else:
-                            vtype = ibase.StringType
+                        vtype = ibase.StringType
                         dispsize = 0
                     elif vartype == ibase.SQL_TIMESTAMP:
                         vtype = datetime.datetime
@@ -1626,26 +1616,22 @@ class PreparedStatement(object):
                 ### Todo: verify handling of P version differences
                 if ibase.PYTHON_MAJOR_VER == 3:
                     value = sqlvar.sqldata[:sqlvar.sqllen]
+                    value = value.decode(ibase.charset_map.get(
+                        self.__get_connection().charset,
+                        self.__get_connection().charset))
                 else:
                     value = str(sqlvar.sqldata[:sqlvar.sqllen])
-                if (ibase.PYTHON_MAJOR_VER == 3
-                    or self.__get_connection().charset):
-                    value = value.decode(ibase.charset_map.get(
-                            self.__get_connection().charset,
-                            self.__get_connection().charset))
             elif vartype == ibase.SQL_VARYING:
                 size = bytes_to_int(sqlvar.sqldata[:1])
                 #value = ctypes.string_at(sqlvar.sqldata[2],2+size)
                 ### Todo: verify handling of P version differences
                 if ibase.PYTHON_MAJOR_VER == 3:
                     value = bytes(sqlvar.sqldata[2:2 + size])
+                    value = value.decode(ibase.charset_map.get(
+                        self.__get_connection().charset,
+                        self.__get_connection().charset))
                 else:
                     value = str(sqlvar.sqldata[2:2 + size])
-                if (ibase.PYTHON_MAJOR_VER == 3
-                    or self.__get_connection().charset):
-                    value = value.decode(ibase.charset_map.get(
-                            self.__get_connection().charset,
-                            self.__get_connection().charset))
             elif vartype in [ibase.SQL_SHORT, ibase.SQL_LONG, ibase.SQL_INT64]:
                 value = bytes_to_int(sqlvar.sqldata[:sqlvar.sqllen])
                 # It's scalled integer?
@@ -1730,11 +1716,10 @@ class PreparedStatement(object):
                 # Finish
                 ibase.isc_close_blob(self._isc_status, blob_handle)
                 value = blob.value
-                if (ibase.PYTHON_MAJOR_VER == 3
-                    or self.__get_connection().charset):
+                if ibase.PYTHON_MAJOR_VER == 3:
                     value = value.decode(ibase.charset_map.get(
-                            self.__get_connection().charset,
-                            self.__get_connection().charset))
+                        self.__get_connection().charset,
+                        self.__get_connection().charset))
             elif vartype == ibase.SQL_ARRAY:
                 value = []
             values.append(value)
@@ -2278,7 +2263,8 @@ class Transaction(object):
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError, self._isc_status,
                                         "Error while commiting transaction:")
-        self._tr_handle = None
+        if not retaining:
+            self._tr_handle = None
 
     def rollback(self, retaining=False, savepoint=None):
         self.__check_active()
@@ -2296,7 +2282,8 @@ class Transaction(object):
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
                                       "Error while rolling back transaction:")
-            self._tr_handle = None
+            if not retaining:
+                self._tr_handle = None
 
     def close(self):
         if self._tr_handle != None:
