@@ -674,7 +674,7 @@ class Connection(object):
             return b.decode(ibase.charset_map.get(self.charset, self.charset))
         else:
             if self.charset:
-                return b.encode(ibase.charset_map.get(self.charset,
+                return b.decode(ibase.charset_map.get(self.charset,
                                                       self.charset))
             else:
                 return b
@@ -1390,7 +1390,10 @@ class PreparedStatement(object):
                     scale = sqlvar.sqlscale
                     precision = 0
                     if vartype in [ibase.SQL_TEXT, ibase.SQL_VARYING]:
-                        vtype = ibase.StringType
+                        if self.__get_connection().charset:
+                            vtype = ibase.UnicodeType
+                        else:
+                            vtype = ibase.StringType
                         dispsize = sqlvar.sqllen
                     elif (vartype in [ibase.SQL_SHORT, ibase.SQL_LONG,
                                       ibase.SQL_INT64]
@@ -1421,7 +1424,10 @@ class PreparedStatement(object):
                         dispsize = 17
                     elif vartype == ibase.SQL_BLOB:
                         scale = sqlvar.sqlsubtype
-                        vtype = ibase.StringType
+                        if self.__get_connection().charset:
+                            vtype = ibase.UnicodeType
+                        else:
+                            vtype = ibase.StringType
                         dispsize = 0
                     elif vartype == ibase.SQL_TIMESTAMP:
                         vtype = datetime.datetime
