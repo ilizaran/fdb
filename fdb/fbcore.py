@@ -58,7 +58,7 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     isc_dpb_wal_bufsize, isc_dpb_wal_chkptlen,
     isc_dpb_wal_grp_cmt_wait, isc_dpb_wal_numbufs,
     isc_dpb_working_directory, isc_info_active_tran_count,
-    isc_info_end, 
+    isc_info_end,
     isc_info_active_transactions, isc_info_allocation,
     isc_info_attachment_id, isc_info_backout_count,
     isc_info_base_level, isc_info_bpage_errors, isc_info_creation_date,
@@ -110,13 +110,13 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     isc_tpb_read, isc_tpb_read_committed, isc_tpb_rec_version,
     isc_tpb_restart_requests, isc_tpb_shared, isc_tpb_verb_time,
     isc_tpb_version3, isc_tpb_wait, isc_tpb_write,
-    
-    b, s, ord2, int2byte, mychr, mybytes, myunicode, mylong, StringType, 
+
+    b, s, ord2, int2byte, mychr, mybytes, myunicode, mylong, StringType,
     IntType, LongType, FloatType, ListeType, UnicodeType, TupleType, xrange,
     charset_map,
-    
+
     isc_sqlcode, isc_sql_interprete, fb_interpret, isc_dsql_execute_immediate,
-    ISC_STATUS_PTR, XSQLDA_PTR, ISC_SHORT, ISC_LONG, ISC_SCHAR, 
+    ISC_STATUS_PTR, XSQLDA_PTR, ISC_SHORT, ISC_LONG, ISC_SCHAR,
     SHRT_MIN, SHRT_MAX, USHRT_MAX, INT_MIN, INT_MAX, LONG_MIN, LONG_MAX,
     ISC_STATUS_ARRAY,
 
@@ -510,7 +510,7 @@ def connect(*args, **kwargs):
             dsn = database
 
     dsn = b(dsn,_FS_ENCODING)
-    
+
     dpb = build_dpb(user, password, sql_dialect, role, charset, buffers,
                     force_write, no_reserve, db_key_scope)
 
@@ -591,7 +591,7 @@ class Connection(object):
         self.out_sqlda = xsqlda_factory(10)
         # Cursor for internal use
         self.__ic = Cursor(self, self.main_transaction)
-    
+
     def __remove_cursor(self, cursor_ref):
         self._cursors.remove(cursor_ref)
     def __remove_group(self, group_ref):
@@ -1541,22 +1541,30 @@ class PreparedStatement(object):
             elif vartype == SQL_TEXT:
                 #value = ctypes.string_at(sqlvar.sqldata,sqlvar.sqllen)
                 ### Todo: verify handling of P version differences
-                if PYTHON_MAJOR_VER == 3:
-                    value = sqlvar.sqldata[:sqlvar.sqllen]
-                    value = value.decode(charset_map.get(
-                        self.__get_connection().charset,
-                        self.__get_connection().charset))
+                if sqlvar.sqlsubtype in (4, 69):  # UTF8 and GB18030
+                    reallength = sqlvar.sqllen // 4
+                elif sqlvar.sqlsubtype == 3:  # UNICODE_FSS
+                    reallength = sqlvar.sqllen // 3
                 else:
-                    value = str(sqlvar.sqldata[:sqlvar.sqllen])
+                    reallength = sqlvar.sqllen
+                if PYTHON_MAJOR_VER == 3:
+                    value = sqlvar.sqldata[:reallength]
+                    if sqlvar.sqlsubtype != 1:   # non OCTETS
+                        value = value.decode(charset_map.get(
+                            self.__get_connection().charset,
+                            self.__get_connection().charset))
+                else:
+                    value = str(sqlvar.sqldata[:reallength])
             elif vartype == SQL_VARYING:
                 size = bytes_to_int(sqlvar.sqldata[:1])
                 #value = ctypes.string_at(sqlvar.sqldata[2],2+size)
                 ### Todo: verify handling of P version differences
                 if PYTHON_MAJOR_VER == 3:
                     value = bytes(sqlvar.sqldata[2:2 + size])
-                    value = value.decode(charset_map.get(
-                        self.__get_connection().charset,
-                        self.__get_connection().charset))
+                    if sqlvar.sqlsubtype != 1:  # non OCTETS
+                        value = value.decode(charset_map.get(
+                            self.__get_connection().charset,
+                            self.__get_connection().charset))
                 else:
                     value = str(sqlvar.sqldata[2:2 + size])
             elif vartype in [SQL_SHORT, SQL_LONG, SQL_INT64]:
@@ -1643,7 +1651,7 @@ class PreparedStatement(object):
                 # Finish
                 ibase.isc_close_blob(self._isc_status, blob_handle)
                 value = blob.value
-                if PYTHON_MAJOR_VER == 3:
+                if PYTHON_MAJOR_VER == 3 and sqlvar.sqlsubtype == 1:
                     value = value.decode(charset_map.get(
                         self.__get_connection().charset,
                         self.__get_connection().charset))
@@ -2285,7 +2293,7 @@ class Transaction(object):
         if db_api_error(self._isc_status):
             self.rollback()
             raise exception_from_status(DatabaseError, self._isc_status,
-                                        "Error while preparing transaction:")        
+                                        "Error while preparing transaction:")
     def __del__(self):
         if self._tr_handle != None:
             self.close()
