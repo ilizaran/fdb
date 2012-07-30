@@ -30,31 +30,35 @@ import sys, os
 import threading
 import time
 
-def printData(cur):
-    """Print data from open cursor to stdout."""
-    # Print a header.
-    for fieldDesc in cur.description:
-        print(fieldDesc[fdb.DESCRIPTION_NAME].ljust(fieldDesc[fdb.DESCRIPTION_DISPLAY_SIZE]) ,)
-    print()
-    for fieldDesc in cur.description:
-        print("-" * max((len(fieldDesc[fdb.DESCRIPTION_NAME]),fieldDesc[fdb.DESCRIPTION_DISPLAY_SIZE])),)
-    print()
-    # For each row, print the value of each field left-justified within
-    # the maximum possible width of that field.
-    fieldIndices = range(len(cur.description))
-    for row in cur:
-        for fieldIndex in fieldIndices:
-            fieldValue = str(row[fieldIndex])
-            fieldMaxWidth = max((len(cur.description[fieldIndex][fdb.DESCRIPTION_NAME]),cur.description[fieldIndex][fdb.DESCRIPTION_DISPLAY_SIZE]))
-            print(fieldValue.ljust(fieldMaxWidth) ,)
-        print()
+if ibase.PYTHON_MAJOR_VER == 3:
+    from io import StringIO
+else:
+    from StringIO import StringIO
+
+#def printData(cur):
+#    """Print data from open cursor to stdout."""
+#    # Print a header.
+#    for fieldDesc in cur.description:
+#        print fieldDesc[fdb.DESCRIPTION_NAME].ljust(fieldDesc[fdb.DESCRIPTION_DISPLAY_SIZE]) ,
+#    print
+#    for fieldDesc in cur.description:
+#        print "-" * max((len(fieldDesc[fdb.DESCRIPTION_NAME]),fieldDesc[fdb.DESCRIPTION_DISPLAY_SIZE])),
+#    print
+#    # For each row, print the value of each field left-justified within
+#    # the maximum possible width of that field.
+#    fieldIndices = range(len(cur.description))
+#    for row in cur:
+#        for fieldIndex in fieldIndices:
+#            fieldValue = str(row[fieldIndex])
+#            fieldMaxWidth = max((len(cur.description[fieldIndex][fdb.DESCRIPTION_NAME]),cur.description[fieldIndex][fdb.DESCRIPTION_DISPLAY_SIZE]))
+#            print fieldValue.ljust(fieldMaxWidth) ,
+#        print
 
 
 class TestCreateDrop(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'droptest.fdb')
     def test_create_drop(self):
         con = fdb.create_database("create database '"+self.dbfile+"' user 'sysdba' password 'masterkey'")
@@ -64,17 +68,14 @@ class TestConnection(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
     def tearDown(self):
         pass
     def test_connect(self):
         con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         assert con._db_handle != None
-        if ibase.PYTHON_MAJOR_VER == 3:
-            assert con._dpb.decode('utf8') == '\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x03'
-        else:
-            assert con._dpb == '\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x03'
+        #print 'con._dpb:',repr(con._dpb)
+        assert con._dpb == ibase.b('\x01\x1c\x06sysdba\x1d\tmasterkey?\x01\x03')
         con.close()
     def test_connect_role(self):
         con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey',role='role')
@@ -134,7 +135,6 @@ class TestTransaction(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
         self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
@@ -188,7 +188,6 @@ class TestDistributedTransaction(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
         self.db1 = os.path.join(self.dbpath,'fbtest-1.fdb')
         self.db2 = os.path.join(self.dbpath,'fbtest-2.fdb')
@@ -216,19 +215,19 @@ class TestDistributedTransaction(unittest.TestCase):
         cg = fdb.ConnectionGroup((self.con1,self.con2))
         assert self.con1.group == cg
         assert self.con2.group == cg
-
+        
         c1 = cg.cursor(self.con1)
         cc1 = self.con1.cursor()
         p1 = cc1.prep('select * from T order by pk')
-
+        
         c2 = cg.cursor(self.con2)
         cc2 = self.con2.cursor()
         p2 = cc2.prep('select * from T order by pk')
-
+        
         c1.execute('insert into t (pk) values (1)')
         c2.execute('insert into t (pk) values (1)')
         cg.commit()
-
+        
         self.con1.commit()
         cc1.execute(p1)
         result = cc1.fetchall()
@@ -239,7 +238,7 @@ class TestDistributedTransaction(unittest.TestCase):
         result = cc2.fetchall()
         #print 'db2:',result
         assert repr(result) == '[(1, None)]'
-
+        
         c1.execute('insert into t (pk) values (2)')
         c2.execute('insert into t (pk) values (2)')
         cg.prepare()
@@ -255,7 +254,7 @@ class TestDistributedTransaction(unittest.TestCase):
         result = cc2.fetchall()
         #print 'db2:',result
         assert repr(result) == '[(1, None), (2, None)]'
-
+        
         c1.execute('insert into t (pk) values (3)')
         c2.execute('insert into t (pk) values (3)')
         cg.rollback()
@@ -270,7 +269,7 @@ class TestDistributedTransaction(unittest.TestCase):
         result = cc2.fetchall()
         #print 'db2:',result
         assert repr(result) == '[(1, None), (2, None)]'
-
+        
         cg.disband()
         assert self.con1.group == None
         assert self.con2.group == None
@@ -279,7 +278,6 @@ class TestCursor(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
         self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
@@ -288,6 +286,29 @@ class TestCursor(unittest.TestCase):
         self.con.execute_immediate("delete from t")
         self.con.commit()
         self.con.close()
+    def test_iteration(self):
+        data = [('USA', 'Dollar'), ('England', 'Pound'), ('Canada', 'CdnDlr'), 
+                ('Switzerland', 'SFranc'), ('Japan', 'Yen'), ('Italy', 'Lira'), 
+                ('France', 'FFranc'), ('Germany', 'D-Mark'), ('Australia', 'ADollar'), 
+                ('Hong Kong', 'HKDollar'), ('Netherlands', 'Guilder'), 
+                ('Belgium', 'BFranc'), ('Austria', 'Schilling'), ('Fiji', 'FDollar')]
+        cur = self.con.cursor()
+        cur.execute('select * from country')
+        rows = [row for row in cur]
+        assert len(rows) == 14
+        assert repr(rows) == "[('USA', 'Dollar'), ('England', 'Pound'), ('Canada', 'CdnDlr'), ('Switzerland', 'SFranc'), ('Japan', 'Yen'), ('Italy', 'Lira'), ('France', 'FFranc'), ('Germany', 'D-Mark'), ('Australia', 'ADollar'), ('Hong Kong', 'HKDollar'), ('Netherlands', 'Guilder'), ('Belgium', 'BFranc'), ('Austria', 'Schilling'), ('Fiji', 'FDollar')]"
+        cur.execute('select * from country')
+        rows = []
+        for row in cur:
+            rows.append(row)
+        assert len(rows) == 14
+        assert repr(rows) == "[('USA', 'Dollar'), ('England', 'Pound'), ('Canada', 'CdnDlr'), ('Switzerland', 'SFranc'), ('Japan', 'Yen'), ('Italy', 'Lira'), ('France', 'FFranc'), ('Germany', 'D-Mark'), ('Australia', 'ADollar'), ('Hong Kong', 'HKDollar'), ('Netherlands', 'Guilder'), ('Belgium', 'BFranc'), ('Austria', 'Schilling'), ('Fiji', 'FDollar')]"
+        cur.execute('select * from country')
+        i = 0
+        for row in cur:
+            i += 1
+            assert row in data
+        assert i == 14
     def test_description(self):
         cur = self.con.cursor()
         cur.execute('select * from country')
@@ -376,7 +397,6 @@ class TestPreparedStatement(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
         self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
@@ -399,11 +419,10 @@ class TestPreparedStatement(unittest.TestCase):
         ps = cur.prep('select * from country')
         assert ps.plan == "PLAN (COUNTRY NATURAL)"
 
-class TestCursor2(unittest.TestCase):
+class TestCursorInsert(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
         self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         #self.con.execute_immediate("recreate table t (c1 integer)")
@@ -429,6 +448,21 @@ class TestCursor2(unittest.TestCase):
         cur.execute('select C1,C4,C5 from T2 where C1 = 2')
         rows = cur.fetchall()
         assert repr(rows) == "[(2, 'AA   ', 'AA')]"
+        # Too long values
+        try:
+            cur.execute('insert into T2 (C1,C4) values (?,?)',[3,'123456'])
+            self.con.commit()
+        except Exception as e:
+            assert e.args == ('Value of parameter (1) is too long, expected 5, found 6',)
+        else:
+            raise ProgrammingError('Exception expected')
+        try:
+            cur.execute('insert into T2 (C1,C5) values (?,?)',[3,'12345678901'])
+            self.con.commit()
+        except Exception as e:
+            assert e.args == ('Value of parameter (1) is too long, expected 10, found 11',)
+        else:
+            raise ProgrammingError('Exception expected')
     def test_insert_datetime(self):
         cur = self.con.cursor()
         now = datetime.datetime(2011,11,13,15,00,1,200)
@@ -437,6 +471,12 @@ class TestCursor2(unittest.TestCase):
         cur.execute('select C1,C6,C7,C8 from T2 where C1 = 3')
         rows = cur.fetchall()
         assert repr(rows) == "[(3, datetime.date(2011, 11, 13), datetime.time(15, 0, 1, 200), datetime.datetime(2011, 11, 13, 15, 0, 1, 200))]"
+
+        cur.execute('insert into T2 (C1,C6,C7,C8) values (?,?,?,?)',[4,'2011-11-13','15:0:1:200','2011-11-13 15:0:1:200'])
+        self.con.commit()
+        cur.execute('select C1,C6,C7,C8 from T2 where C1 = 4')
+        rows = cur.fetchall()
+        assert repr(rows) == "[(4, datetime.date(2011, 11, 13), datetime.time(15, 0, 1, 200000), datetime.datetime(2011, 11, 13, 15, 0, 1, 200000))]"
     def test_insert_blob(self):
         cur = self.con.cursor()
         cur.execute('insert into T2 (C1,C9) values (?,?)',[4,'This is a BLOB!'])
@@ -469,7 +509,6 @@ class TestStoredProc(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
         self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
     def tearDown(self):
@@ -489,7 +528,6 @@ class TestServices(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
     def test_attach(self):
         svc = fdb.services.connect(password='masterkey')
@@ -515,18 +553,18 @@ class TestServices(unittest.TestCase):
         con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
         con2 = fdb.connect(dsn='employee',user='sysdba',password='masterkey')
         x = svc.getAttachedDatabaseNames()
-        #assert len(x) == 2
-        #assert self.dbfile in x
+        assert len(x) == 2
+        assert self.dbfile in x
         #assert '/opt/firebird/examples/empbuild/employee.fdb' in x
         x = svc.getConnectionCount()
-        #assert x == 3
+#        print 'getConnectionCount',x
+        assert x == 2
         svc.close()
 
 class TestServices2(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
         self.fbk = os.path.join(self.dbpath,'test_employee.fbk')
         self.rfdb = os.path.join(self.dbpath,'test_employee.fdb')
@@ -639,7 +677,6 @@ class TestEvents(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
         self.dbfile = os.path.join(self.dbpath,'fbevents.fdb')
         if os.path.exists(self.dbfile):
             os.remove(self.dbfile)
@@ -648,15 +685,15 @@ class TestEvents(unittest.TestCase):
         c.execute("CREATE TABLE T (PK Integer, C1 Integer)")
         c.execute("""CREATE TRIGGER EVENTS_AU FOR T ACTIVE
 BEFORE UPDATE POSITION 0
-AS
-BEGIN
+AS 
+BEGIN 
     if (old.C1 <> new.C1) then
         post_event 'c1_updated' ;
 END""")
         c.execute("""CREATE TRIGGER EVENTS_AI FOR T ACTIVE
 AFTER INSERT POSITION 0
-AS
-BEGIN
+AS 
+BEGIN 
     if (new.c1 = 1) then
         post_event 'insert_1' ;
     else if (new.c1 = 2) then
@@ -676,7 +713,7 @@ END""")
             for cmd in command_list:
                 c.execute(cmd)
             self.con.commit()
-
+        
         timed_event = threading.Timer(3.0,send_events,args=[["insert into T (PK,C1) values (1,1)",]])
         events = self.con.event_conduit(['insert_1'])
         timed_event.start()
@@ -727,7 +764,7 @@ END""")
             for cmd in command_list:
                 c.execute(cmd)
             self.con.commit()
-
+        
         timed_event = threading.Timer(3.0,send_events,args=[["insert into T (PK,C1) values (1,1)",]])
         events = self.con.event_conduit(['insert_1'])
         send_events(["insert into T (PK,C1) values (1,1)",
@@ -739,116 +776,210 @@ END""")
         events.close()
         assert repr(e) == "{'insert_1': 1}"
 
-class TestWork(unittest.TestCase):
+class TestStreamBLOBs(unittest.TestCase):
     def setUp(self):
         self.cwd = os.getcwd()
         self.dbpath = os.path.join(self.cwd,'test')
-        self.dbpath = '/tmp'
-        self.dbfile = os.path.join(self.dbpath,'fbwork.fdb')
+        self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey')
+        #self.con.execute_immediate("recreate table t (c1 integer)")
+        #self.con.commit()
+        #self.con.execute_immediate("RECREATE TABLE T2 (C1 Smallint,C2 Integer,C3 Bigint,C4 Char(5),C5 Varchar(10),C6 Date,C7 Time,C8 Timestamp,C9 Blob sub_type 1,C10 Numeric(18,2),C11 Decimal(18,2),C12 Float,C13 Double precision,C14 Numeric(8,4),C15 Decimal(8,4))")
+        #self.con.commit()
+    def tearDown(self):
+        self.con.execute_immediate("delete from t")
+        self.con.execute_immediate("delete from t2")
+        self.con.commit()
+        self.con.close()
+    def testBlobBasic(self):
+        blob = """Firebird supports two types of blobs, stream and segmented.
+The database stores segmented blobs in chunks.
+Each chunk starts with a two byte length indicator followed by however many bytes of data were passed as a segment.
+Stream blobs are stored as a continuous array of data bytes with no length indicators included."""
+        cur = self.con.cursor()
+        cur.execute('insert into T2 (C1,C9) values (?,?)',[4,StringIO(blob)])
+        self.con.commit()
+        p = cur.prep('select C1,C9 from T2 where C1 = 4')
+        p.set_stream_blob('C9')
+        cur.execute(p)
+        row = cur.fetchone()
+        blob_reader = row[1]
+        try:
+            assert blob_reader.read(20) == 'Firebird supports tw'
+            assert blob_reader.read(20) == 'o types of blobs, st'
+            assert blob_reader.read(400) == 'ream and segmented.\nThe database stores segmented blobs in chunks.\nEach chunk starts with a two byte length indicator followed by however many bytes of data were passed as a segment.\nStream blobs are stored as a continuous array of data bytes with no length indicators included.'
+            assert blob_reader.read(20) == ''
+            assert blob_reader.tell() == 318
+            blob_reader.seek(20)
+            assert blob_reader.tell() == 20
+            assert blob_reader.read(20) == 'o types of blobs, st'
+            blob_reader.seek(0)
+            assert blob_reader.tell() == 0
+            assert blob_reader.readlines() == StringIO(blob).readlines()
+            blob_reader.seek(0)
+            for line in blob_reader:
+                assert line.rstrip('\n') in blob.split('\n')
+            #blob_reader.seek(50)
+            #print blob_reader.tell()
+            #print repr(blob_reader.readline())
+            blob_reader.seek(0)
+            assert blob_reader.read() == blob
+            blob_reader.seek(-9,os.SEEK_END)
+            assert blob_reader.read() == 'included.'
+            blob_reader.seek(-20,os.SEEK_END)
+            blob_reader.seek(11,os.SEEK_CUR)
+            assert blob_reader.read() == 'included.'
+            blob_reader.seek(60)
+            assert blob_reader.readline() == 'The database stores segmented blobs in chunks.\n'
+        finally:
+            # Necessary to avoid bad BLOB handle on BlobReader.close in tearDown
+            # because BLOB handle is no longer valid after table purge
+            p.close()
+    def testBlobExtended(self):
+        blob = """Firebird supports two types of blobs, stream and segmented.
+The database stores segmented blobs in chunks.
+Each chunk starts with a two byte length indicator followed by however many bytes of data were passed as a segment.
+Stream blobs are stored as a continuous array of data bytes with no length indicators included."""
+        cur = self.con.cursor()
+        cur.execute('insert into T2 (C1,C9) values (?,?)',[1,StringIO(blob)])
+        cur.execute('insert into T2 (C1,C9) values (?,?)',[2,StringIO(blob)])
+        self.con.commit()
+        p = cur.prep('select C1,C9 from T2')
+        p.set_stream_blob('C9')
+        cur.execute(p)
+        #rows = [row for row in cur]
+        try:
+            for row in cur:
+                blob_reader = row[1]
+                assert blob_reader.read(20) == 'Firebird supports tw'
+                assert blob_reader.read(20) == 'o types of blobs, st'
+                assert blob_reader.read(400) == 'ream and segmented.\nThe database stores segmented blobs in chunks.\nEach chunk starts with a two byte length indicator followed by however many bytes of data were passed as a segment.\nStream blobs are stored as a continuous array of data bytes with no length indicators included.'
+                assert blob_reader.read(20) == ''
+                assert blob_reader.tell() == 318
+                blob_reader.seek(20)
+                assert blob_reader.tell() == 20
+                assert blob_reader.read(20) == 'o types of blobs, st'
+                blob_reader.seek(0)
+                assert blob_reader.tell() == 0
+                assert blob_reader.readlines() == StringIO(blob).readlines()
+                blob_reader.seek(0)
+                for line in blob_reader:
+                    assert line.rstrip('\n') in blob.split('\n')
+                #blob_reader.seek(50)
+                #print blob_reader.tell()
+                #print repr(blob_reader.readline())
+                blob_reader.seek(0)
+                assert blob_reader.read() == blob
+                blob_reader.seek(-9,os.SEEK_END)
+                assert blob_reader.read() == 'included.'
+                blob_reader.seek(-20,os.SEEK_END)
+                blob_reader.seek(11,os.SEEK_CUR)
+                assert blob_reader.read() == 'included.'
+                blob_reader.seek(60)
+                assert blob_reader.readline() == 'The database stores segmented blobs in chunks.\n'
+        finally:
+            # Necessary to avoid bad BLOB handle on BlobReader.close in tearDown
+            # because BLOB handle is no longer valid after table purge
+            p.close()
+
+class TestCharsetConversion(unittest.TestCase):
+    def setUp(self):
+        self.cwd = os.getcwd()
+        self.dbpath = os.path.join(self.cwd,'test')
+        self.dbfile = os.path.join(self.dbpath,'fbtest.fdb')
+        self.con = fdb.connect(dsn=self.dbfile,user='sysdba',password='masterkey',charset='utf8')
+        #self.con.execute_immediate("recreate table t (c1 integer)")
+        #self.con.commit()
+        #self.con.execute_immediate("RECREATE TABLE T2 (C1 Smallint,C2 Integer,C3 Bigint,C4 Char(5),C5 Varchar(10),C6 Date,C7 Time,C8 Timestamp,C9 Blob sub_type 1,C10 Numeric(18,2),C11 Decimal(18,2),C12 Float,C13 Double precision,C14 Numeric(8,4),C15 Decimal(8,4))")
+        #self.con.commit()
+    def tearDown(self):
+        self.con.execute_immediate("delete from t3")
+        self.con.commit()
+        self.con.close()
+    def testCharVarchar(self):
+        s = 'Introdução'
+        if ibase.PYTHON_MAJOR_VER != 3:
+            s = s.decode('utf8')
+        assert len(s) == 10
+        data = tuple([1,s,s])
+        cur = self.con.cursor()
+        cur.execute('insert into T3 (C1,C2,C3) values (?,?,?)',data)
+        self.con.commit()
+        cur.execute('select C1,C2,C3 from T3 where C1 = 1')
+        row = cur.fetchone()
+        assert row == data
+    def testBlob(self):
+        s = """Introdução
+
+Este artigo descreve como você pode fazer o InterBase e o Firebird 1.5 
+coehabitarem pacificamente seu computador Windows. Por favor, note que esta 
+solução não permitirá que o Interbase e o Firebird rodem ao mesmo tempo. 
+Porém você poderá trocar entre ambos com um mínimo de luta. """
+        if ibase.PYTHON_MAJOR_VER != 3:
+            s = s.decode('utf8')
+        assert len(s) == 295
+        data = tuple([2,s])
+        b_data = tuple([3,ibase.b('bytestring')])
+        cur = self.con.cursor()
+        # Text BLOB
+        cur.execute('insert into T3 (C1,C4) values (?,?)',data)
+        self.con.commit()
+        cur.execute('select C1,C4 from T3 where C1 = 2')
+        row = cur.fetchone()
+        assert row == data
+        # Insert Unicode into non-textual BLOB
+        try:
+            cur.execute('insert into T3 (C1,C5) values (?,?)',data)
+            self.con.commit()
+        except Exception as e:
+            assert e.args == ('Unicode strings are not acceptable input for a non-textual BLOB column.',)
+        else:
+            raise ProgrammingError('Exception expected')
+        # Read binary from non-textual BLOB
+        cur.execute('insert into T3 (C1,C5) values (?,?)',b_data)
+        self.con.commit()
+        cur.execute('select C1,C5 from T3 where C1 = 3')
+        row = cur.fetchone()
+        assert row == b_data
+
+class TestBugs(unittest.TestCase):
+    def setUp(self):
+        self.cwd = os.getcwd()
+        self.dbpath = os.path.join(self.cwd,'test')
+        self.dbfile = os.path.join(self.dbpath,'fbbugs.fdb')
+        if os.path.exists(self.dbfile):
+            os.remove(self.dbfile)
         self.con = fdb.create_database("CREATE DATABASE '%s' USER 'SYSDBA' PASSWORD 'masterkey'" % self.dbfile)
     def tearDown(self):
         self.con.drop_database()
         self.con.close()
-    #def test_functional_fkey_unique_insert_07(self):
-        ## SetUp
-        #c = self.con.cursor()
-        #c.execute("""CREATE TABLE MASTER_TABLE (
-    #ID     INTEGER PRIMARY KEY,
-    #UF     INTEGER UNIQUE,
-    #INT_F  INTEGER
-#);""")
-        #c.execute("""CREATE TABLE DETAIL_TABLE (
-    #ID    INTEGER PRIMARY KEY,
-    #FKEY  INTEGER
-#);""")
-        #self.con.commit()
-        #c.execute("ALTER TABLE DETAIL_TABLE ADD CONSTRAINT FK_DETAIL_TABLE FOREIGN KEY (FKEY) REFERENCES MASTER_TABLE (UF);")
-        #self.con.commit()
-        #c.execute("INSERT INTO MASTER_TABLE (ID, UF, INT_F) VALUES (1, 1, 10);")
-        #self.con.commit()
-        #c.close()
-        ## Test
-        #TPB_master = (
-              #chr(fdb.isc_tpb_write)
-            #+ chr(fdb.isc_tpb_read_committed) + chr(fdb.isc_tpb_rec_version)
-            #+ chr(fdb.isc_tpb_nowait)
-                          #)
-        #TPB_detail = (
-              #chr(fdb.isc_tpb_write)
-            #+ chr(fdb.isc_tpb_read_committed) + chr(fdb.isc_tpb_rec_version)
-            #+ chr(fdb.isc_tpb_nowait)
-                          #)
-        #self.con.begin(tpb=TPB_master)
-        #c = self.con.cursor()
-        #c.execute('DELETE FROM MASTER_TABLE WHERE ID=1')
-        #self.con.commit()
-        ##Create second connection for change detail table
-        #con_detail = fdb.connect(dsn=self.dbfile,user='SYSDBA',password='masterkey')
+    def test_pyfb_17(self):
+        create_table = """
+        Create Table table1  (
+            ID Integer,
+            sort Integer NOT Null
+        );
+        """
+        
+        create_trigger = """CREATE TRIGGER BIU_Trigger FOR table1
+        ACTIVE BEFORE INSERT OR UPDATE POSITION 0
+        as
+        begin
+          if (new.sort IS NULL) then
+          begin
+            new.sort = 1;
+          end
+        end
+        """
+        
+        cur = self.con.cursor()
+        cur.execute(create_table)
+        cur.execute(create_trigger)
+        self.con.commit()
+        # PYFB-17: fails with fdb, passes with kinterbasdb
+        cur.execute('insert into table1 (ID, sort) values(1, ?)', (None, ))
 
-        #try:
-            #con_detail.begin(tpb=TPB_detail)
-            #cd = con_detail.cursor()
-            #cd.execute("INSERT INTO DETAIL_TABLE (ID, FKEY) VALUES (1,1)")
-            #con_detail.commit()
-        #except Exception, e:
-            ##for msg in e: print msg
-            #print e[0]
-        #else:
-            #con_detail.close()
-    #def test_functional_trigger_database_connect_04(self):
-        ## SetUp
-        #cmds = ["create table LOG (ID integer, MSG varchar(100));",
-                #"create generator LOGID;",
-                #"create exception CONNECTERROR 'Exception in ON CONNECT trigger';",
-                #"create role TEST;",
-                #"grant TEST to PUBLIC;",
-                #"""create trigger LOG_BI for LOG active before insert position 0
-#as
-#begin
-  #if (new.ID is null) then
-    #new.ID = gen_id(LOGID,1);
-#end""", """create trigger ONCONNECT_1 on connect position 0
-#as
-#begin
-  #insert into LOG (MSG) values ('Connect T1 as ' || current_role);
-#end""","""create trigger ONCONNECT_2 on connect position 0
-#as
-#begin
-  #insert into LOG (MSG) values ('Connect T2 as ' || current_role);
-  #if (current_role ='TEST') then
-      #exception CONNECTERROR;
-#end""","""create trigger ONCONNECT_3 on connect position 20
-#as
-#begin
-  #insert into LOG (MSG) values ('Connect T3 as ' || current_role);
-#end""",'COMMIT']
-        #c = self.con.cursor()
-        #for cmd in cmds:
-            #if cmd == 'COMMIT':
-                #self.con.commit()
-            #else:
-                #c.execute(cmd)
-        #c.close()
-        #self.con.close()
-        ## Test
-        #self.con = fdb.connect(dsn=self.dbfile,user='SYSDBA',password='masterkey')
-        #try:
-            #con2 = fdb.connect(dsn=self.dbfile,user='SYSDBA',password='masterkey',role='TEST')
-        #except Exception,e:
-            #for msg in e: print msg
-        #else:
-            #con2.close()
-
-        #c = self.con.cursor()
-        #c.execute('select * from LOG')
-        #printData(c)
-    def test_functional_intfunc_string_ascii_val_01(self):
-        # SetUp
-        c = self.con.cursor()
-        c.execute("select ascii_val('') from rdb$database")
-        c.fetchall()
-
-
+    
 if __name__ == '__main__':
     unittest.main()
 

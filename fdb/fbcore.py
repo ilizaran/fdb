@@ -65,7 +65,7 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     isc_dpb_wal_bufsize, isc_dpb_wal_chkptlen,
     isc_dpb_wal_grp_cmt_wait, isc_dpb_wal_numbufs,
     isc_dpb_working_directory, isc_info_active_tran_count,
-    isc_info_end,
+    isc_info_end, 
     isc_info_active_transactions, isc_info_allocation,
     isc_info_attachment_id, isc_info_backout_count,
     isc_info_base_level, isc_info_bpage_errors, isc_info_creation_date,
@@ -117,13 +117,13 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     isc_tpb_read, isc_tpb_read_committed, isc_tpb_rec_version,
     isc_tpb_restart_requests, isc_tpb_shared, isc_tpb_verb_time,
     isc_tpb_version3, isc_tpb_wait, isc_tpb_write,
-
-    b, s, ord2, int2byte, mychr, mybytes, myunicode, mylong, StringType,
+    
+    b, s, ord2, int2byte, mychr, mybytes, myunicode, mylong, StringType, 
     IntType, LongType, FloatType, ListeType, UnicodeType, TupleType, xrange,
     charset_map,
-
+    
     isc_sqlcode, isc_sql_interprete, fb_interpret, isc_dsql_execute_immediate,
-    ISC_STATUS_PTR, XSQLDA_PTR, ISC_SHORT, ISC_LONG, ISC_SCHAR,
+    ISC_STATUS_PTR, XSQLDA_PTR, ISC_SHORT, ISC_LONG, ISC_SCHAR, 
     SHRT_MIN, SHRT_MAX, USHRT_MAX, INT_MIN, INT_MAX, LONG_MIN, LONG_MAX,
     ISC_STATUS_ARRAY,
 
@@ -140,7 +140,7 @@ if PYTHON_MAJOR_VER != 3:
     from exceptions import NotImplementedError
 
 
-__version__ = '0.8.0'
+__version__ = '0.8.5'
 apilevel = '2.0'
 threadsafety = 1
 paramstyle = 'qmark'
@@ -246,10 +246,7 @@ _FS_ENCODING = sys.getfilesystemencoding()
 DIST_TRANS_MAX_DATABASES = 16
 
 def bs(byte_array):
-    if PYTHON_MAJOR_VER == 3:
-        return bytes(byte_array)
-    return ''.join([chr(c) for c in byte_array])
-
+    return bytes(byte_array) if PYTHON_MAJOR_VER == 3 else ''.join([chr(c) for c in byte_array])
 
 ISOLATION_LEVEL_READ_UNCOMMITTED = 0
 ISOLATION_LEVEL_READ_COMMITED = 1
@@ -336,6 +333,12 @@ def tebarray_factory(size):
 
 buf_pointer = ctypes.POINTER(ctypes.c_char)
 
+def inc_pointer(pointer):
+    t = type(pointer)
+    p = ctypes.cast(pointer,ctypes.c_void_p)
+    p.value += 1
+    return ctypes.cast(p,t)
+    
 def bytes_to_bint(b):           # Read as big endian
     len_b = len(b)
     if len_b == 1:
@@ -519,7 +522,7 @@ def connect(*args, **kwargs):
             dsn = database
 
     dsn = b(dsn,_FS_ENCODING)
-
+    
     dpb = build_dpb(user, password, sql_dialect, role, charset, buffers,
                     force_write, no_reserve, db_key_scope)
 
@@ -595,13 +598,15 @@ class Connection(object):
         self.sql_dialect = sql_dialect
         self._dpb = dpb
         self._charset = charset
+        if charset:
+            self._charset = charset.upper()
 
         self._isc_status = ISC_STATUS_ARRAY()
         self._db_handle = db_handle
         self.out_sqlda = xsqlda_factory(10)
         # Cursor for internal use
         self.__ic = Cursor(self, self.main_transaction)
-
+    
     def __remove_cursor(self, cursor_ref):
         self._cursors.remove(cursor_ref)
     def __remove_group(self, group_ref):
@@ -1128,7 +1133,7 @@ class EventBlock(object):
             ctypes.memmove(result,updated,length)
             self.__queue.put((ibase.OP_RECORD_AND_REREGISTER,self))
             return 0
-
+        
         self.__queue = queue
         self._db_handle = db_handle
         self._isc_status = ISC_STATUS_ARRAY(0)
@@ -1137,7 +1142,7 @@ class EventBlock(object):
         self.__results = ibase.RESULT_VECTOR(0)
         self.__closed = False
         self.__callback = ibase.ISC_EVENT_CALLBACK(callback)
-
+        
         self.event_buf = ctypes.pointer(ibase.ISC_UCHAR(0))
         self.result_buf = ctypes.pointer(ibase.ISC_UCHAR(0))
         self.buf_length = 0
@@ -1147,6 +1152,8 @@ class EventBlock(object):
                                                   ctypes.pointer(self.result_buf),
                                                   *[b(x) for x in event_names])
         self.__wait_for_events()
+    def __lt__(self,other):
+        return self.event_id < other.event_id
     def __wait_for_events(self):
         ibase.isc_que_events(self._isc_status,self._db_handle,self.event_id,
                              self.buf_length,self.event_buf,
@@ -1163,7 +1170,7 @@ class EventBlock(object):
             self.__first = False
             self.__wait_for_events()
             return None
-
+        
         for i in xrange(len(self.event_names)):
             result[self.event_names[i]] = int(self.__results[i])
         self.__wait_for_events()
@@ -1253,6 +1260,8 @@ class PreparedStatement(object):
         self.in_sqlda = xsqlda_factory(10)
         self.in_sqlda_save = []
         self.statement_type = None
+        self.__streamed_blobs = []
+        self.__blob_readers = []
         self.__executed = False
         self.__prepared = False
         self.__closed = False
@@ -1260,6 +1269,8 @@ class PreparedStatement(object):
         self.__output_cache = None
         #self.out_buffer = None
         self._last_fetch_status = ibase.ISC_STATUS(self.NO_FETCH_ATTEMPTED_YET)
+        self.__charset = self.__get_connection().charset
+        self.__sql_dialect = self.__get_connection().sql_dialect
 
         # allocate statement handle
         self._stmt_handle = ibase.isc_stmt_handle(0)
@@ -1275,7 +1286,7 @@ class PreparedStatement(object):
                                self._stmt_handle,
                                len(self._str_to_bytes(operation)),
                                self._str_to_bytes(operation),
-                               self.__get_connection().sql_dialect,
+                               self.__sql_dialect,
                                ctypes.cast(ctypes.pointer(self.out_sqlda),
                                            XSQLDA_PTR))
         if db_api_error(self._isc_status):
@@ -1295,7 +1306,7 @@ class PreparedStatement(object):
         self.statement_type = bytes_to_int(info[3:3 + bytes_to_int(info[1:3])])
         # Init XSQLDA for input parameters
         ibase.isc_dsql_describe_bind(self._isc_status, self._stmt_handle,
-                                     self.__get_connection().sql_dialect,
+                                     self.__sql_dialect,
                                      ctypes.cast(ctypes.pointer(self.in_sqlda),
                                                  XSQLDA_PTR))
         if db_api_error(self._isc_status):
@@ -1304,7 +1315,7 @@ class PreparedStatement(object):
         if self.in_sqlda.sqld > self.in_sqlda.sqln:
             self.in_sqlda = xsqlda_factory(self.in_sqlda.sqld)
             ibase.isc_dsql_describe_bind(self._isc_status, self._stmt_handle,
-                                         self.__get_connection().sql_dialect,
+                                         self.__sql_dialect,
                                          ctypes.cast(ctypes.pointer(self.in_sqlda),
                                                      XSQLDA_PTR))
             if db_api_error(self._isc_status):
@@ -1317,7 +1328,7 @@ class PreparedStatement(object):
             self.in_sqlda_save.append((sqlvar.sqltype, sqlvar.sqllen))
         # Init output XSQLDA
         ibase.isc_dsql_describe(self._isc_status, self._stmt_handle,
-                                self.__get_connection().sql_dialect,
+                                self.__sql_dialect,
                                 ctypes.cast(ctypes.pointer(self.out_sqlda),
                                             XSQLDA_PTR))
         if db_api_error(self._isc_status):
@@ -1326,7 +1337,7 @@ class PreparedStatement(object):
         if self.out_sqlda.sqld > self.out_sqlda.sqln:
             self.out_sqlda = xsqlda_factory(self.out_sqlda.sqld)
             ibase.isc_dsql_describe(self._isc_status, self._stmt_handle,
-                                    self.__get_connection().sql_dialect,
+                                    self.__sql_dialect,
                                     ctypes.cast(ctypes.pointer(self.out_sqlda),
                                                 XSQLDA_PTR))
             if db_api_error(self._isc_status):
@@ -1359,8 +1370,7 @@ class PreparedStatement(object):
         while True:
             info = b(' ') * buf_size
             ibase.isc_dsql_sql_info(self._isc_status, self._stmt_handle, 2,
-                                    bs([ibase.isc_info_sql_get_plan,
-                                        isc_info_end]),
+                                    bs([ibase.isc_info_sql_get_plan,isc_info_end]),
                                     len(info), info)
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
@@ -1383,13 +1393,11 @@ class PreparedStatement(object):
         size = bytes_to_int(info[1:_SIZE_OF_SHORT + 1])
         # Skip first byte: a new line
         ### Todo: Better handling of P version specifics
+        result = ctypes.string_at(info[_SIZE_OF_SHORT + 2:], size - 1)
         if PYTHON_MAJOR_VER == 3:
-            return ((ctypes.string_at(info[_SIZE_OF_SHORT + 2:], size - 1))
-                    .decode(charset_map.get(
-                        self.__get_connection().charset,
-                        self.__get_connection().charset)))
+            return result.decode(charset_map.get(self.__charset,self.__charset))
         else:
-            return ctypes.string_at(info[_SIZE_OF_SHORT + 2:], size - 1)
+            return result
     def __is_fixed_point(self, dialect, data_type, subtype, scale):
         return ((data_type in [SQL_SHORT, SQL_LONG,
                                SQL_INT64]
@@ -1496,7 +1504,7 @@ class PreparedStatement(object):
                                      SQL_D_FLOAT]:
                         # Special case, dialect 1 DOUBLE/FLOAT
                         # could be Fixed point
-                        if (self.__get_connection().sql_dialect < 3) and scale:
+                        if (self.__sql_dialect < 3) and scale:
                             vtype = decimal.Decimal
                             precision = (self.__get_connection()._determine_field_precision(sqlvar))
                         else:
@@ -1690,34 +1698,31 @@ class PreparedStatement(object):
                                                 and sqlvar.sqlind.contents.value == -1):
                 value = None
             elif vartype == SQL_TEXT:
-                #value = ctypes.string_at(sqlvar.sqldata,sqlvar.sqllen)
+                value = ctypes.string_at(sqlvar.sqldata,sqlvar.sqllen)
+                #value = sqlvar.sqldata[:sqlvar.sqllen]
                 ### Todo: verify handling of P version differences
+                if ((self.__charset or PYTHON_MAJOR_VER == 3) 
+                    and sqlvar.sqlsubtype != 1):   # non OCTETS
+                    value = value.decode(charset_map.get(self.__charset,self.__charset))
+                # CHAR with multibyte encoding requires special handling
                 if sqlvar.sqlsubtype in (4, 69):  # UTF8 and GB18030
                     reallength = sqlvar.sqllen // 4
                 elif sqlvar.sqlsubtype == 3:  # UNICODE_FSS
                     reallength = sqlvar.sqllen // 3
                 else:
                     reallength = sqlvar.sqllen
-                if PYTHON_MAJOR_VER == 3:
-                    value = sqlvar.sqldata[:reallength]
-                    if sqlvar.sqlsubtype != 1:   # non OCTETS
-                        value = value.decode(charset_map.get(
-                            self.__get_connection().charset,
-                            self.__get_connection().charset))
-                else:
-                    value = str(sqlvar.sqldata[:reallength])
+                value = value[:reallength]
             elif vartype == SQL_VARYING:
                 size = bytes_to_int(sqlvar.sqldata[:1])
                 #value = ctypes.string_at(sqlvar.sqldata[2],2+size)
                 ### Todo: verify handling of P version differences
                 if PYTHON_MAJOR_VER == 3:
                     value = bytes(sqlvar.sqldata[2:2 + size])
-                    if sqlvar.sqlsubtype != 1:  # non OCTETS
-                        value = value.decode(charset_map.get(
-                            self.__get_connection().charset,
-                            self.__get_connection().charset))
                 else:
                     value = str(sqlvar.sqldata[2:2 + size])
+                if ((self.__charset or PYTHON_MAJOR_VER == 3) 
+                    and sqlvar.sqlsubtype != 1):   # non OCTETS
+                    value = value.decode(charset_map.get(self.__charset,self.__charset))
             elif vartype in [SQL_SHORT, SQL_LONG, SQL_INT64]:
                 value = bytes_to_int(sqlvar.sqldata[:sqlvar.sqllen])
                 # It's scalled integer?
@@ -1741,71 +1746,96 @@ class PreparedStatement(object):
                 val = sqlvar.sqldata[:sqlvar.sqllen]
                 blobid = ibase.ISC_QUAD(bytes_to_int(val[:4]),
                                         bytes_to_int(val[4:sqlvar.sqllen]))
-                blob_handle = ibase.isc_blob_handle()
-                ibase.isc_open_blob2(self._isc_status,
-                                     self.__get_connection()._db_handle,
-                                     self.__get_transaction()._tr_handle,
-                                     blob_handle, blobid, 0, None)
-                if db_api_error(self._isc_status):
-                    raise exception_from_status(DatabaseError,
-                                                self._isc_status,
-                                                "Cursor.read_output_blob/isc_open_blob2:")
-                # Get BLOB total length and max. size of segment
-                result = ctypes.cast(ctypes.create_string_buffer(20),
-                                     buf_pointer)
-                ibase.isc_blob_info(self._isc_status, blob_handle, 2,
-                                    bs([ibase.isc_info_blob_total_length,
-                                        ibase.isc_info_blob_max_segment]),
-                                    20, result)
-                if db_api_error(self._isc_status):
-                    raise exception_from_status(DatabaseError,
-                                                self._isc_status,
-                                                "Cursor.read_output_blob/isc_blob_info:")
-                offset = 0
-                while bytes_to_int(result[offset]) != isc_info_end:
-                    code = bytes_to_int(result[offset])
-                    offset += 1
-                    if code == ibase.isc_info_blob_total_length:
-                        length = bytes_to_int(result[offset:offset + 2])
-                        blob_length = bytes_to_int(result[
-                            offset + 2:offset + 2 + length])
-                        offset += length + 2
-                    elif code == ibase.isc_info_blob_max_segment:
-                        length = bytes_to_int(result[offset:offset + 2])
-                        segment_size = bytes_to_int(result[
-                            offset + 2:offset + 2 + length])
-                        offset += length + 2
-                # Load BLOB
-                allow_incomplete_segment_read = False
-                status = ibase.ISC_STATUS(0)
-                blob = ctypes.create_string_buffer(blob_length)
-                bytes_read = 0
-                bytes_actually_read = ctypes.c_ushort(0)
-                while bytes_read < blob_length:
-                    status = ibase.isc_get_segment(self._isc_status,
-                                                   blob_handle,
-                                                   bytes_actually_read,
-                                                   min(segment_size,
-                                                       blob_length - bytes_read),
-                                                   ctypes.byref(
-                                                       blob, bytes_read))
-                    if status != 0:
-                        if ((status == ibase.isc_segment)
-                            and allow_incomplete_segment_read):
-                            bytes_read += bytes_actually_read.value
+                # Check if stream BLOB is requested instead materialized one
+                use_stream = False
+                if self.__streamed_blobs:
+                    # Get the BLOB name
+                    sqlname = self._bytes_to_str(
+                        sqlvar.sqlname[:sqlvar.sqlname_length])
+                    alias = self._bytes_to_str(
+                        sqlvar.aliasname[:sqlvar.aliasname_length])
+                    if alias != sqlname:
+                        sqlname = alias
+                    if sqlname in self.__streamed_blobs:
+                        use_stream = True
+                if use_stream:
+                    # Stream BLOB
+                    value = BlobReader(blobid,self.__get_connection()._db_handle,
+                                       self.__get_transaction()._tr_handle,
+                                       sqlvar.sqlsubtype == 1,
+                                       self.__charset)
+                    self.__blob_readers.append(value)
+                else:
+                    # Materialized BLOB
+                    blob_handle = ibase.isc_blob_handle()
+                    ibase.isc_open_blob2(self._isc_status,
+                                         self.__get_connection()._db_handle,
+                                         self.__get_transaction()._tr_handle,
+                                         blob_handle, blobid, 0, None)
+                    if db_api_error(self._isc_status):
+                        raise exception_from_status(DatabaseError,
+                                                    self._isc_status,
+                                                    "Cursor.read_output_blob/isc_open_blob2:")
+                    # Get BLOB total length and max. size of segment
+                    result = ctypes.cast(ctypes.create_string_buffer(20),
+                                         buf_pointer)
+                    ibase.isc_blob_info(self._isc_status, blob_handle, 2,
+                                        bs([ibase.isc_info_blob_total_length,
+                                            ibase.isc_info_blob_max_segment]),
+                                        20, result)
+                    if db_api_error(self._isc_status):
+                        raise exception_from_status(DatabaseError,
+                                                    self._isc_status,
+                                                    "Cursor.read_output_blob/isc_blob_info:")
+                    offset = 0
+                    while bytes_to_int(result[offset]) != isc_info_end:
+                        code = bytes_to_int(result[offset])
+                        offset += 1
+                        if code == ibase.isc_info_blob_total_length:
+                            length = bytes_to_int(result[offset:offset + 2])
+                            blob_length = bytes_to_int(result[
+                                offset + 2:offset + 2 + length])
+                            offset += length + 2
+                        elif code == ibase.isc_info_blob_max_segment:
+                            length = bytes_to_int(result[offset:offset + 2])
+                            segment_size = bytes_to_int(result[
+                                offset + 2:offset + 2 + length])
+                            offset += length + 2
+                    # Load BLOB
+                    allow_incomplete_segment_read = False
+                    status = ibase.ISC_STATUS(0)
+                    blob = ctypes.create_string_buffer(blob_length)
+                    bytes_read = 0
+                    bytes_actually_read = ctypes.c_ushort(0)
+                    while bytes_read < blob_length:
+                        status = ibase.isc_get_segment(self._isc_status,
+                                                       blob_handle,
+                                                       bytes_actually_read,
+                                                       min(segment_size,
+                                                           blob_length - bytes_read),
+                                                       ctypes.byref(
+                                                           blob, bytes_read))
+                        if status != 0:
+                            if ((status == ibase.isc_segment)
+                                and allow_incomplete_segment_read):
+                                bytes_read += bytes_actually_read.value
+                            else:
+                                raise exception_from_status(DatabaseError,
+                                                            self._isc_status,
+                                                            "Cursor.read_output_blob/isc_get_segment:")
                         else:
-                            raise exception_from_status(DatabaseError,
-                                                        self._isc_status,
-                                                        "Cursor.read_output_blob/isc_get_segment:")
-                    else:
-                        bytes_read += bytes_actually_read.value
-                # Finish
-                ibase.isc_close_blob(self._isc_status, blob_handle)
-                value = blob.value
-                if PYTHON_MAJOR_VER == 3 and sqlvar.sqlsubtype == 1:
-                    value = value.decode(charset_map.get(
-                        self.__get_connection().charset,
-                        self.__get_connection().charset))
+                            bytes_read += bytes_actually_read.value
+                    # Finish
+                    ibase.isc_close_blob(self._isc_status, blob_handle)
+                    if db_api_error(self._isc_status):
+                        raise exception_from_status(DatabaseError,
+                                                    self._isc_status,
+                                                    "Cursor.read_otput_blob/isc_close_blob:")
+                    value = blob.value
+                    if ((self.__charset or PYTHON_MAJOR_VER == 3) 
+                        and sqlvar.sqlsubtype == 1):
+                        value = value.decode(charset_map.get(self.__charset,
+                                                             self.__charset))
             elif vartype == SQL_ARRAY:
                 value = []
             values.append(value)
@@ -1824,6 +1854,9 @@ class PreparedStatement(object):
                 # Set the null flag whether sqlvar definition allows it or not,
                 # to give BEFORE triggers to act on value without
                 # our interference.
+                if (sqlvar.sqltype & 1) == 0:
+                    # NULLs were not allowed, so set it allowed or FB will complain
+                    sqlvar.sqltype += 1
                 sqlvar.sqlind = ctypes.pointer(ISC_SHORT(-1))
                 sqlvar.sqldata = None
             else:
@@ -1843,14 +1876,12 @@ class PreparedStatement(object):
                     # Place for Implicit Conversion of Input Parameters
                     # from Strings
                     if isinstance(value, UnicodeType):
-                        value = value.encode(
-                            charset_map.get(self.__get_connection().charset,
-                                            self.__get_connection().charset))
+                        value = value.encode(charset_map.get(self.__charset,self.__charset))
                     ### Todo: verify handling of P version differences
                     if PYTHON_MAJOR_VER != 3:
                         if not isinstance(value, StringType):
                             value = str(value)
-                    if len(value) > sqlvar.sqllen:
+                    if vartype in [SQL_TEXT, SQL_VARYING] and len(value) > sqlvar.sqllen:
                         raise ValueError("Value of parameter (%i) is too long,"
                                          " expected %i, found %i" % (i, sqlvar.sqllen,
                                                                      len(value)))
@@ -1872,7 +1903,7 @@ class PreparedStatement(object):
                                             ' acceptable input for'
                                             ' a fixed-point column.' % str(type(value)))
                     self._check_integer_rage(value,
-                                             self.__get_connection().sql_dialect,
+                                             self.__sql_dialect,
                                              vartype, sqlvar.sqlsubtype,
                                              sqlvar.sqlscale)
                     sqlvar.sqldata = ctypes.cast(ctypes.pointer(
@@ -1902,49 +1933,87 @@ class PreparedStatement(object):
                     blobid = ibase.ISC_QUAD(0, 0)
                     blob_handle = ibase.isc_blob_handle()
                     ### Todo: verify handling of P version differences
-                    if PYTHON_MAJOR_VER == 3:
-                        if isinstance(value, str):
-                            value = value.encode(
-                                charset_map.get(
-                                self.__get_connection().charset,
-                                self.__get_connection().charset))
-                    blob = ctypes.create_string_buffer(value)
-                    ibase.isc_create_blob2(self._isc_status,
-                                           self.__get_connection()._db_handle,
-                                           self.__get_transaction()._tr_handle,
-                                           blob_handle, blobid, 0, None)
-                    if db_api_error(self._isc_status):
-                        raise exception_from_status(DatabaseError,
-                                                    self._isc_status,
-                                                    "Cursor.write_input_blob/isc_create_blob2:")
-                    sqlvar.sqldata = ctypes.cast(ctypes.pointer(blobid),
-                                                 buf_pointer)
-                    total_size = len(value)
-                    bytes_written_so_far = 0
-                    bytes_to_write_this_time = MAX_BLOB_SEGMENT_SIZE
-                    while (bytes_written_so_far < total_size):
-                        if (
-                            (total_size - bytes_written_so_far) <
-                            MAX_BLOB_SEGMENT_SIZE
-                            ):
-                            bytes_to_write_this_time = (total_size -
-                                                        bytes_written_so_far)
-                        ibase.isc_put_segment(self._isc_status, blob_handle,
-                                              bytes_to_write_this_time,
-                                              ctypes.byref(blob,
-                                                           bytes_written_so_far
-                                                           )
-                                              )
+                    if ((self.__charset or 
+                         (PYTHON_MAJOR_VER == 3 and isinstance(value, str))) 
+                        and sqlvar.sqlsubtype == 1):
+                        value = value.encode(charset_map.get(self.__charset,
+                                                             self.__charset))
+                    if hasattr(value,'read'):
+                        # It seems we've got file-like object, use stream BLOB
+                        ibase.isc_create_blob2(self._isc_status,
+                                               self.__get_connection()._db_handle,
+                                               self.__get_transaction()._tr_handle,
+                                               blob_handle, blobid, 4, 
+                                               bs([ibase.isc_bpb_version1,
+                                                   ibase.isc_bpb_type,1,
+                                                   ibase.isc_bpb_type_stream]))
                         if db_api_error(self._isc_status):
                             raise exception_from_status(DatabaseError,
                                                         self._isc_status,
-                                                        "Cursor.write_input_blob/isc_put_segment:")
-                        bytes_written_so_far += bytes_to_write_this_time
-                    ibase.isc_close_blob(self._isc_status, blob_handle)
-                    if db_api_error(self._isc_status):
-                        raise exception_from_status(DatabaseError,
-                                                    self._isc_status,
-                                                    "Cursor.write_input_blob/isc_close_blob:")
+                                                        "Cursor.write_input_blob/isc_create_blob2:")
+                        sqlvar.sqldata = ctypes.cast(ctypes.pointer(blobid),
+                                                     buf_pointer)
+                        blob = ctypes.create_string_buffer(MAX_BLOB_SEGMENT_SIZE)
+                        blob.raw = ibase.b(value.read(MAX_BLOB_SEGMENT_SIZE))
+                        while len(blob.value) > 0:
+                            ibase.isc_put_segment(self._isc_status, blob_handle,
+                                                  len(blob.value),
+                                                  ctypes.byref(blob)
+                                                  )
+                            if db_api_error(self._isc_status):
+                                raise exception_from_status(DatabaseError,
+                                                            self._isc_status,
+                                                            "Cursor.write_input_blob/isc_put_segment:")
+                            ctypes.memset(blob,0,MAX_BLOB_SEGMENT_SIZE)
+                            blob.raw = ibase.b(value.read(MAX_BLOB_SEGMENT_SIZE))
+                        ibase.isc_close_blob(self._isc_status, blob_handle)
+                        if db_api_error(self._isc_status):
+                            raise exception_from_status(DatabaseError,
+                                                        self._isc_status,
+                                                        "Cursor.write_input_blob/isc_close_blob:")
+                    else:
+                        # Non-stream BLOB
+                        if isinstance(value, str if PYTHON_MAJOR_VER == 3 else UnicodeType):
+                            raise TypeError('Unicode strings are not'
+                                            ' acceptable input for'
+                                            ' a non-textual BLOB column.')
+                        blob = ctypes.create_string_buffer(value)
+                        ibase.isc_create_blob2(self._isc_status,
+                                               self.__get_connection()._db_handle,
+                                               self.__get_transaction()._tr_handle,
+                                               blob_handle, blobid, 0, None)
+                        if db_api_error(self._isc_status):
+                            raise exception_from_status(DatabaseError,
+                                                        self._isc_status,
+                                                        "Cursor.write_input_blob/isc_create_blob2:")
+                        sqlvar.sqldata = ctypes.cast(ctypes.pointer(blobid),
+                                                     buf_pointer)
+                        total_size = len(value)
+                        bytes_written_so_far = 0
+                        bytes_to_write_this_time = MAX_BLOB_SEGMENT_SIZE
+                        while (bytes_written_so_far < total_size):
+                            if (
+                                (total_size - bytes_written_so_far) <
+                                MAX_BLOB_SEGMENT_SIZE
+                                ):
+                                bytes_to_write_this_time = (total_size -
+                                                            bytes_written_so_far)
+                            ibase.isc_put_segment(self._isc_status, blob_handle,
+                                                  bytes_to_write_this_time,
+                                                  ctypes.byref(blob,
+                                                               bytes_written_so_far
+                                                               )
+                                                  )
+                            if db_api_error(self._isc_status):
+                                raise exception_from_status(DatabaseError,
+                                                            self._isc_status,
+                                                            "Cursor.write_input_blob/isc_put_segment:")
+                            bytes_written_so_far += bytes_to_write_this_time
+                        ibase.isc_close_blob(self._isc_status, blob_handle)
+                        if db_api_error(self._isc_status):
+                            raise exception_from_status(DatabaseError,
+                                                        self._isc_status,
+                                                        "Cursor.write_input_blob/isc_close_blob:")
                 elif vartype == SQL_ARRAY:
                     raise NotImplementedError('array')
     def _free_handle(self):
@@ -1953,6 +2022,8 @@ class PreparedStatement(object):
             self.__closed = True
             self.__output_cache = None
             self._name = None
+            while len(self.__blob_readers) > 0:
+                self.__blob_readers.pop().close()
             if self.statement_type == isc_info_sql_stmt_select:
                 ibase.isc_dsql_free_statement(self._isc_status,
                                               self._stmt_handle,
@@ -1964,6 +2035,8 @@ class PreparedStatement(object):
         raise NotImplementedError('Cursor.callproc')
     def _close(self):
         if self._stmt_handle != None:
+            while len(self.__blob_readers) > 0:
+                self.__blob_readers.pop().close()
             stmt_handle = self._stmt_handle
             self._stmt_handle = None
             self.__executed = False
@@ -2007,7 +2080,7 @@ class PreparedStatement(object):
             ibase.isc_dsql_execute2(self._isc_status,
                                     self.__get_transaction()._tr_handle,
                                     self._stmt_handle,
-                                    self.__get_connection().sql_dialect,
+                                    self.__sql_dialect,
                                     xsqlda_in,
                                     xsqlda_out)
             if db_api_error(self._isc_status):
@@ -2022,7 +2095,7 @@ class PreparedStatement(object):
             ibase.isc_dsql_execute2(self._isc_status,
                                     self.__get_transaction()._tr_handle,
                                     self._stmt_handle,
-                                    self.__get_connection().sql_dialect,
+                                    self.__sql_dialect,
                                     xsqlda_in,
                                     None)
             if db_api_error(self._isc_status):
@@ -2045,7 +2118,7 @@ class PreparedStatement(object):
                 self._last_fetch_status = ibase.isc_dsql_fetch(
                     self._isc_status,
                     self._stmt_handle,
-                    self.__get_connection().sql_dialect,
+                    self.__sql_dialect,
                     ctypes.cast(ctypes.pointer(self.out_sqlda), XSQLDA_PTR))
                 if self._last_fetch_status == 0:
                     return self.__XSQLDA2Tuple(self.out_sqlda)
@@ -2065,6 +2138,8 @@ class PreparedStatement(object):
             raise exception_from_status(OperationalError, self._isc_status,
                                         "Could not set cursor name:")
         self._name = name
+    def set_stream_blob(self,blob_name):
+        self.__streamed_blobs.append(blob_name)
     def __del__(self):
         if self._stmt_handle != None:
             self._close()
@@ -2449,7 +2524,7 @@ class Transaction(object):
         if db_api_error(self._isc_status):
             self.rollback()
             raise exception_from_status(DatabaseError, self._isc_status,
-                                        "Error while preparing transaction:")
+                                        "Error while preparing transaction:")        
     def __del__(self):
         if self._tr_handle != None:
             self.close()
@@ -2601,6 +2676,203 @@ class ConnectionGroup(object):
         self._transaction.rollback(retaining)
         #self._transaction = None
 
+
+class BlobReader(object):
+    """
+    
+    """
+    def __init__(self, blobid, db_handle, tr_handle, is_text, charset):
+        self.__closed = False
+        self.__mode = 'r'
+        self.__bytes_read = 0
+        self.__pos = 0
+        self.__index = 0
+        #self.__bstream = ibase.Bopen(blobid, db_handle, tr_handle, self.__mode)
+        self.__db_handle = db_handle
+        self.__tr_handle = tr_handle
+        self.__is_text = is_text
+        self.__charset = charset
+        self.__blobid = blobid
+        self.__opened = False
+        self._blob_handle = ibase.isc_blob_handle()
+        self._isc_status = ISC_STATUS_ARRAY()
+    def __open(self):
+        ibase.isc_open_blob2(self._isc_status,
+                             self.__db_handle,
+                             self.__tr_handle,
+                             self._blob_handle, self.__blobid, 4, 
+                             bs([ibase.isc_bpb_version1,
+                                 ibase.isc_bpb_type,1,
+                                 ibase.isc_bpb_type_stream]))
+        if db_api_error(self._isc_status):
+            raise exception_from_status(DatabaseError,
+                                        self._isc_status,
+                                        "Cursor.read_output_blob/isc_open_blob2:")
+        # Get BLOB total length and max. size of segment
+        result = ctypes.cast(ctypes.create_string_buffer(20),
+                             buf_pointer)
+        ibase.isc_blob_info(self._isc_status, self._blob_handle, 2,
+                            bs([ibase.isc_info_blob_total_length,
+                                ibase.isc_info_blob_max_segment]),
+                            20, result)
+        if db_api_error(self._isc_status):
+            raise exception_from_status(DatabaseError,
+                                        self._isc_status,
+                                        "Cursor.read_output_blob/isc_blob_info:")
+        offset = 0
+        while bytes_to_int(result[offset]) != isc_info_end:
+            code = bytes_to_int(result[offset])
+            offset += 1
+            if code == ibase.isc_info_blob_total_length:
+                length = bytes_to_int(result[offset:offset + 2])
+                self._blob_length = bytes_to_int(result[
+                    offset + 2:offset + 2 + length])
+                offset += length + 2
+            elif code == ibase.isc_info_blob_max_segment:
+                length = bytes_to_int(result[offset:offset + 2])
+                self._segment_size = bytes_to_int(result[
+                    offset + 2:offset + 2 + length])
+                offset += length + 2
+        # Create internal buffer
+        self.__buf = ctypes.create_string_buffer(self._segment_size)
+        self.__buf_pos = 0
+        self.__buf_data = 0
+        self.__opened = True
+    def __reset_buffer(self):
+        ctypes.memset(self.__buf,0,self._segment_size)
+        self.__buf_pos = 0
+        self.__buf_data = 0
+    def __BLOB_get(self):
+        self.__reset_buffer()
+        # Load BLOB
+        allow_incomplete_segment_read = False
+        status = ibase.ISC_STATUS(0)
+        bytes_read = 0
+        bytes_actually_read = ctypes.c_ushort(0)
+        status = ibase.isc_get_segment(self._isc_status,
+                                       self._blob_handle,
+                                       bytes_actually_read,
+                                       self._segment_size,
+                                       ctypes.byref(self.__buf))
+        if status != 0:
+            if status == ibase.isc_segstr_eof:
+                self.__buf_data = 0
+            elif ((status == ibase.isc_segment)
+                and allow_incomplete_segment_read):
+                self.__buf_data = bytes_actually_read.value
+            else:
+                raise exception_from_status(DatabaseError,
+                                            self._isc_status,
+                                            "BlobReader.__BLOB_get/isc_get_segment:")
+        else:
+            self.__buf_data = bytes_actually_read.value
+    def close(self):
+        if self.__opened and not self.closed:
+            self.__closed = True
+            ibase.isc_close_blob(self._isc_status, self._blob_handle)
+            if db_api_error(self._isc_status):
+                raise exception_from_status(DatabaseError,
+                                            self._isc_status,
+                                            "BlobReader.close/isc_close_blob:")
+    def flush(self):
+        pass
+    def next(self):
+        line = self.readline()
+        if line:
+            return line
+        else:
+            raise StopIteration
+    __next__ = next
+    def __iter__(self):
+        return self
+    def read(self, size = -1):
+        assert not self.closed
+        if not self.__opened:
+            self.__open()
+        if size >= 0:
+            to_read = size
+        else:
+            to_read = self._blob_length - self.__pos
+        result = ctypes.create_string_buffer(to_read)
+        pos = 0
+        while to_read > 0:
+            to_copy = min(to_read, self.__buf_data - self.__buf_pos)
+            if to_copy == 0:
+                self.__BLOB_get()
+                to_copy = min(to_read, self.__buf_data - self.__buf_pos)
+                if to_copy == 0:
+                    # BLOB EOF
+                    break
+            ctypes.memmove(ctypes.byref(result,pos),
+                           ctypes.byref(self.__buf,self.__buf_pos),
+                           to_copy)
+            pos += to_copy
+            self.__pos += to_copy
+            self.__buf_pos += to_copy
+            to_read -= to_copy
+        result = result.value
+        if PYTHON_MAJOR_VER == 3 and self.__is_text:
+            result = result.decode(charset_map.get(self.__charset,self.__charset))
+        return result
+    def readline(self):
+        if not self.__opened:
+            self.__open()
+        line = []
+        to_read = self._blob_length - self.__pos
+        to_copy = 0
+        found = False
+        while to_read > 0 and not found:
+            to_scan = min(to_read, self.__buf_data - self.__buf_pos)
+            if to_scan == 0:
+                self.__BLOB_get()
+                to_scan = min(to_read, self.__buf_data - self.__buf_pos)
+                if to_scan == 0:
+                    # BLOB EOF
+                    break
+            pos = 0
+            result = ''
+            while pos < to_scan:
+                if self.__buf[self.__buf_pos+pos] == ibase.b('\n'):
+                    found = True
+                    pos += 1
+                    break
+                pos += 1
+            result = ctypes.string_at(ctypes.byref(self.__buf,self.__buf_pos), pos)
+            if PYTHON_MAJOR_VER == 3 and self.__is_text:
+                result = result.decode(charset_map.get(self.__charset,self.__charset))
+            line.append(result)
+            self.__buf_pos += pos
+            self.__pos += pos
+            to_read -= pos
+        return ''.join(line)
+    def readlines(self, sizehint = None):
+        result = []
+        line = self.readline()
+        while line:
+            result.append(line)
+            line = self.readline()
+        return result
+    def seek(self, offset, whence = os.SEEK_SET):
+        pos = ibase.ISC_LONG(0)
+        ibase.isc_seek_blob (self._isc_status,
+                             self._blob_handle,
+                             whence, ibase.ISC_LONG(offset), ctypes.byref(pos))
+        if db_api_error(self._isc_status):
+            raise exception_from_status(DatabaseError,
+                                        self._isc_status,
+                                        "BlobReader.seek/isc_blob_info:")
+        self.__pos = pos.value
+        self.__reset_buffer()
+    def tell(self):
+        return self.__pos
+    def __get_closed(self):
+        return self.__closed
+    def __get_mode(self):
+        return self.__mode
+    def __del__(self):
+        self.close()
+    closed = property(__get_closed)
+    mode = property(__get_mode)
 
 class Iterator(object):
     def __init__(self, method, sentinel):
