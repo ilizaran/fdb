@@ -1737,7 +1737,7 @@ class _ServiceActionRequestBuilder(object):
         # at all with Firebird 1.0 and earlier).
         ### Todo: verify handling of P version differences, refactor
         if ibase.PYTHON_MAJOR_VER == 3:
-            colonIndex = (databaseName.decode(fdb._FS_ENCODING)).find(':')
+            colonIndex = (databaseName.decode(fdb.fbcore._FS_ENCODING)).find(':')
         else:
             colonIndex = databaseName.find(':')
         if colonIndex != -1:
