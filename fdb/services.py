@@ -62,7 +62,6 @@ CAPABILITY_NO_SERVER_SHUTDOWN = 0x100
 
 
 def _checkString(st):
-    ### Todo: verify handling of P version differences, refactor
     if ibase.PYTHON_MAJOR_VER == 3:
         try:
             if isinstance(st, str):
@@ -72,9 +71,10 @@ def _checkString(st):
                # sure there are no non-ASCII characters in s.
                 st.encode('ASCII')
             else:
-                raise TypeError('String argument to Services API must be'
-                    ' of type str, not %s.' % type(st)
-                    )
+                if not isinstance(st, ibase.mybytes):
+                    raise TypeError('String argument to Services API must be'
+                        ' of type %s, not %s.' % (type(ibase.mybytes),type(st))
+                      )
         except UnicodeEncodeError:
             raise TypeError("The database engine's Services API only works"
                 " properly with ASCII string parameters, so str instances that"
@@ -82,7 +82,7 @@ def _checkString(st):
                 )
     else:
         try:
-            if isinstance(st, str):
+            if isinstance(st, ibase.UnicodeType):
                # In str instances, Python allows any character in the "default
                # encoding", which is typically not ASCII.  Since Firebird's
                # Services API only works (properly) with ASCII, we need to make
@@ -90,12 +90,9 @@ def _checkString(st):
                # already know s is a str instance.
                 st.encode('ASCII')
             else:
-                if isinstance(st, unicode):
-                   # Raise a more specific error message than the general case.
-                    raise UnicodeError
-                else:
+                if not isinstance(st, ibase.mybytes):
                     raise TypeError('String argument to Services API must be'
-                        ' of type str, not %s.' % type(st)
+                        ' of type %s, not %s.' % (type(ibase.mybytes),type(st))
                       )
         except UnicodeError:
             raise TypeError("The database engine's Services API only works"
@@ -665,6 +662,7 @@ class Connection(object):
         reqBuf = _ServiceActionRequestBuilder()
         reqBuf.add_option_mask(ibase.isc_spb_rpr_list_limbo_trans)
         raw = self._repair_action(database, reqBuf, line_separator='')
+        raw = ibase.b(raw)
         nBytes = len(raw)
 
         transIDs = []
