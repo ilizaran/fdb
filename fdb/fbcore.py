@@ -2024,7 +2024,7 @@ class PreparedStatement(object):
                     reallength = sqlvar.sqllen
                 value = value[:reallength]
             elif vartype == SQL_VARYING:
-                size = bytes_to_int(sqlvar.sqldata[:1])
+                size = abs(bytes_to_int(sqlvar.sqldata[:1]))
                 #value = ctypes.string_at(sqlvar.sqldata[2],2+size)
                 ### Todo: verify handling of P version differences
                 if PYTHON_MAJOR_VER == 3:
