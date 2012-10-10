@@ -418,26 +418,26 @@ def bytes_to_int(b):            # Read as little endian.
 
 def bint_to_bytes(val, nbytes):  # Convert int value to big endian bytes.
     if nbytes == 1:
-        fmt = 'b'
+        fmt = 'B'
     elif nbytes == 2:
-        fmt = '>h'
+        fmt = '>H'
     elif nbytes == 4:
-        fmt = '>l'
+        fmt = '>L'
     elif nbytes == 8:
-        fmt = '>q'
+        fmt = '>Q'
     else:
         raise InternalError
     return struct.pack(fmt, val)
 
 def int_to_bytes(val, nbytes):  # Convert int value to little endian bytes.
     if nbytes == 1:
-        fmt = 'b'
+        fmt = 'B'
     elif nbytes == 2:
-        fmt = '<h'
+        fmt = '<H'
     elif nbytes == 4:
-        fmt = '<l'
+        fmt = '<L'
     elif nbytes == 8:
-        fmt = '<q'
+        fmt = '<Q'
     else:
         raise InternalError
     return struct.pack(fmt, val)
@@ -2024,7 +2024,7 @@ class PreparedStatement(object):
                     reallength = sqlvar.sqllen
                 value = value[:reallength]
             elif vartype == SQL_VARYING:
-                size = abs(bytes_to_int(sqlvar.sqldata[:1]))
+                size = bytes_to_int(sqlvar.sqldata[:1])
                 #value = ctypes.string_at(sqlvar.sqldata[2],2+size)
                 ### Todo: verify handling of P version differences
                 if PYTHON_MAJOR_VER == 3:
