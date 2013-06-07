@@ -30,8 +30,11 @@ import struct
 import warnings
 import datetime
 
+api = None
+
 # The following SHUT_* constants are to be passed as the `shutdown_mode`
 # parameter to Connection.shutdown:
+SHUT_LEGACY = -1
 SHUT_NORMAL = ibase.isc_spb_prp_sm_normal
 SHUT_MULTI = ibase.isc_spb_prp_sm_multi
 SHUT_SINGLE = ibase.isc_spb_prp_sm_single
@@ -126,7 +129,7 @@ def _vax_inverse(i, myformat):
     # Apply the inverse of _ksrv.isc_vax_integer to a Python integer; return
     # the raw bytes of the resulting value.
     iRaw = struct.pack(myformat, i)
-    iConv = ibase.isc_vax_integer(iRaw, len(iRaw))
+    iConv = api.isc_vax_integer(iRaw, len(iRaw))
     iConvRaw = struct.pack(myformat, iConv)
     return iConvRaw
 
@@ -172,7 +175,7 @@ def connect(host='service_mgr',
        host.  Therefore, the database specified as a parameter to methods such as
        `getStatistics` MUST NOT include the host name of the database server.
     """
-
+    setattr(sys.modules[__name__],'api',fdb.load_api())
     if password is None:
         raise fdb.ProgrammingError('A password is required to use'
                                    ' the Services Manager.')
@@ -247,7 +250,7 @@ class Connection(object):
                       ibase.isc_spb_user_name, len(self.user)]) + self.user + \
                       fdb.bs([ibase.isc_spb_password,
                             len(self.password)]) + self.password
-        ibase.isc_service_attach(self._isc_status, len(self.host), self.host,
+        api.isc_service_attach(self._isc_status, len(self.host), self.host,
                                  self._svc_handle, len(spb), spb)
         if fdb.db_api_error(self._isc_status):
             raise fdb.exception_from_status(fdb.DatabaseError,
@@ -280,7 +283,7 @@ class Connection(object):
     def __read_buffer(self, init=''):
         request = fdb.bs([ibase.isc_info_svc_to_eof])
         spb = ibase.b('')
-        ibase.isc_service_query(self._isc_status, self._svc_handle, None,
+        api.isc_service_query(self._isc_status, self._svc_handle, None,
                                 len(spb), spb,
                                 len(request), request,
                                 ibase.USHRT_MAX, self._result_buffer)
@@ -345,7 +348,7 @@ class Connection(object):
             spb = fdb.bs(ibase.isc_info_svc_timeout, timeout)
         while True:
             result_buffer = ctypes.create_string_buffer(result_size)
-            ibase.isc_service_query(self._isc_status, self._svc_handle, None,
+            api.isc_service_query(self._isc_status, self._svc_handle, None,
                                     len(spb), spb,
                                     len(request), request,
                                     result_size, result_buffer)
@@ -379,7 +382,7 @@ class Connection(object):
         databases = []
 
         raw = self._QR(ibase.isc_info_svc_svr_db_info)
-#        assert raw[-1] == ibase.int2byte(ibase.isc_info_flag_end)
+#        assert raw[-1] == api.int2byte(ibase.isc_info_flag_end)
 
         pos = 1  # Ignore raw[0].
         upper_limit = len(raw) - 1
@@ -410,7 +413,7 @@ class Connection(object):
             raise fdb.ProgrammingError("The size of the request buffer"
                                        " must not exceed %d."
                                        % ibase.USHRT_MAX)
-        ibase.isc_service_start(self._isc_status, self._svc_handle, None,
+        api.isc_service_start(self._isc_status, self._svc_handle, None,
                                 len(request_buffer), request_buffer)
         if fdb.db_api_error(self._isc_status):
             raise fdb.exception_from_status(fdb.OperationalError,
@@ -520,7 +523,7 @@ class Connection(object):
         with the connection.
         """
         if self._svc_handle:
-            ibase.isc_service_detach(self._isc_status, self._svc_handle)
+            api.isc_service_detach(self._isc_status, self._svc_handle)
             if fdb.db_api_error(self._isc_status):
                 raise fdb.exception_from_status(fdb.DatabaseError,
                               self._isc_status, "Services/isc_service_detach:")
@@ -610,11 +613,11 @@ class Connection(object):
         
         Next fdb.services constants define possible info codes returned::
         
-            :data:`CAPABILITY_MULTI_CLIENT`
-            :data:`CAPABILITY_REMOTE_HOP`
-            :data:`CAPABILITY_SERVER_CONFIG`
-            :data:`CAPABILITY_QUOTED_FILENAME`
-            :data:`CAPABILITY_NO_SERVER_SHUTDOWN`
+            CAPABILITY_MULTI_CLIENT
+            CAPABILITY_REMOTE_HOP
+            CAPABILITY_SERVER_CONFIG
+            CAPABILITY_QUOTED_FILENAME
+            CAPABILITY_NO_SERVER_SHUTDOWN
 
         Example::
         
@@ -1383,8 +1386,8 @@ class Connection(object):
         
         :param string database: Database filename or alias.
         :param integer shutdown_mode: One from following constants:
-           :data:`~fdb.services.SHUT_SINGLE`, :data:`~fdb.services.SHUT_MULTI` 
-           or :data:`~fdb.services.SHUT_FULL`.
+           :data:`~fdb.services.SHUT_LEGACY`, :data:`~fdb.services.SHUT_SINGLE`, 
+           :data:`~fdb.services.SHUT_MULTI` or :data:`~fdb.services.SHUT_FULL`.
         :param integer shutdown_method: One from following constants:
            :data:`~fdb.services.SHUT_FORCE`, 
            :data:`~fdb.services.SHUT_DENY_NEW_TRANSACTIONS`
@@ -1396,9 +1399,9 @@ class Connection(object):
         self.__check_active()
         _checkString(database)
         database = ibase.b(database)
-        if shutdown_mode not in (SHUT_SINGLE, SHUT_MULTI, SHUT_FULL):
+        if shutdown_mode not in (SHUT_LEGACY, SHUT_SINGLE, SHUT_MULTI, SHUT_FULL):
             raise ValueError('shutdown_mode must be one of the following'
-                ' constants:  fdb.services.SHUT_SINGLE,'
+                ' constants:  fdb.services.SHUT_LEGACY, fdb.services.SHUT_SINGLE,'
                 ' fdbfdb.services.SHUT_MULTI,'
                 ' fdb.services.SHUT_FULL.')
         if shutdown_method not in (SHUT_FORCE, SHUT_DENY_NEW_TRANSACTIONS, 
@@ -1408,8 +1411,9 @@ class Connection(object):
                 ' fdb.services.SHUT_DENY_NEW_TRANSACTIONS,'
                 ' fdb.services.SHUT_DENY_NEW_ATTACHMENTS.')
         reqBuf = _ServiceActionRequestBuilder()
-        reqBuf.add_numeric(ibase.isc_spb_prp_shutdown_mode, 
-                           shutdown_mode, numCType='B')
+        if shutdown_mode != SHUT_LEGACY:
+            reqBuf.add_numeric(ibase.isc_spb_prp_shutdown_mode, 
+                               shutdown_mode, numCType='B')
         reqBuf.add_numeric(shutdown_method, timeout, numCType='I')
         self._property_action(database, reqBuf)
     def bring_online(self, database, online_mode=SHUT_NORMAL):
@@ -1417,22 +1421,25 @@ class Connection(object):
         
         :param string database: Database filename or alias.
         :param integer online_mode: (Optional) One from following constants:
-           :data:`~fdb.services.SHUT_SINGLE`, :data:`~fdb.services.SHUT_MULTI` 
-           or :data:`~fdb.services.SHUT_NORMAL` (**Default**).
+           :data:`~fdb.services.SHUT_LEGACY`, :data:`~fdb.services.SHUT_SINGLE`, 
+           :data:`~fdb.services.SHUT_MULTI` or :data:`~fdb.services.SHUT_NORMAL` (**Default**).
            
         .. seealso:: See also :meth:`~Connection.shutdown` method.
         """
         self.__check_active()
         _checkString(database)
         database = ibase.b(database)
-        if online_mode not in (SHUT_NORMAL,SHUT_SINGLE, SHUT_MULTI):
+        if online_mode not in (SHUT_LEGACY, SHUT_NORMAL,SHUT_SINGLE, SHUT_MULTI):
             raise ValueError('online_mode must be one of the following'
-                ' constants:  fdb.services.SHUT_NORMAL,'
+                ' constants:  fdb.services.SHUT_LEGACY, fdb.services.SHUT_NORMAL,'
                 ' fdbfdb.services.SHUT_SINGLE,'
                 ' fdb.services.SHUT_MULTI.')
         reqBuf = _ServiceActionRequestBuilder()
-        reqBuf.add_numeric(ibase.isc_spb_prp_online_mode, 
-                           online_mode, numCType='B')
+        if online_mode == SHUT_LEGACY:
+            reqBuf.add_option_mask(ibase.isc_spb_prp_db_online)
+        else:
+            reqBuf.add_numeric(ibase.isc_spb_prp_online_mode, 
+                               online_mode, numCType='B')
         self._property_action(database, reqBuf)
     def sweep(self, database):
         """Perform Database Sweep.

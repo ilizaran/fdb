@@ -23,7 +23,6 @@
 
 import sys
 import os
-from . import ibase
 import ctypes
 import struct
 import time
@@ -31,6 +30,12 @@ import datetime
 import decimal
 import weakref
 import threading
+
+from . import ibase
+from . import schema
+from . import monitor
+from . import utils
+
 try:
     # Python 2
     from itertools import izip_longest
@@ -65,7 +70,12 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     isc_dpb_wal_bufsize, isc_dpb_wal_chkptlen,
     isc_dpb_wal_grp_cmt_wait, isc_dpb_wal_numbufs,
     isc_dpb_working_directory, isc_info_active_tran_count,
-    isc_info_end, 
+    isc_info_end, isc_info_truncated,
+    isc_info_sql_stmt_type, isc_info_sql_get_plan, isc_info_sql_records,
+    isc_info_req_select_count, isc_info_req_insert_count,
+    isc_info_req_update_count, isc_info_req_delete_count,
+    isc_info_blob_total_length, isc_info_blob_max_segment,
+    
     isc_info_active_transactions, isc_info_allocation,
     isc_info_attachment_id, isc_info_backout_count,
     isc_info_base_level, isc_info_bpage_errors, isc_info_creation_date,
@@ -122,15 +132,28 @@ from fdb.ibase import (frb_info_att_charset, isc_dpb_activate_shadow,
     IntType, LongType, FloatType, ListType, UnicodeType, TupleType, xrange,
     charset_map,
     
-    isc_sqlcode, isc_sql_interprete, fb_interpret, isc_dsql_execute_immediate,
-    ISC_STATUS_PTR, XSQLDA_PTR, ISC_SHORT, ISC_LONG, ISC_SCHAR, 
+    #isc_sqlcode, isc_sql_interprete, fb_interpret, isc_dsql_execute_immediate,
+    XSQLDA_PTR, ISC_SHORT, ISC_LONG, ISC_SCHAR, ISC_UCHAR, ISC_QUAD,
     SHRT_MIN, SHRT_MAX, USHRT_MAX, INT_MIN, INT_MAX, LONG_MIN, LONG_MAX,
-    ISC_STATUS_ARRAY,
+    
 
     SQL_TEXT, SQL_VARYING, SQL_SHORT, SQL_LONG, SQL_FLOAT, SQL_DOUBLE,
     SQL_D_FLOAT, SQL_TIMESTAMP, SQL_BLOB, SQL_ARRAY, SQL_QUAD, SQL_TYPE_TIME,
     SQL_TYPE_DATE, SQL_INT64, SUBTYPE_NUMERIC, SUBTYPE_DECIMAL,
-    MAX_BLOB_SEGMENT_SIZE
+    MAX_BLOB_SEGMENT_SIZE, ISC_INT64,
+    
+    XSQLVAR, ISC_TEB, RESULT_VECTOR, ISC_STATUS, ISC_STATUS_ARRAY, ISC_STATUS_PTR, 
+    ISC_EVENT_CALLBACK, ISC_ARRAY_DESC,
+    
+    blr_varying, blr_varying2, blr_text, blr_text2, blr_short, blr_long,
+    blr_int64, blr_float, blr_d_float, blr_double, blr_timestamp, blr_sql_date, 
+    blr_sql_time,
+    
+    SQLDA_version1, isc_segment,
+    
+    isc_db_handle, isc_tr_handle, isc_stmt_handle, isc_blob_handle,
+    
+    fbclient_API
 
     )
 
@@ -140,14 +163,20 @@ if PYTHON_MAJOR_VER != 3:
     from exceptions import NotImplementedError
 
 
-__version__ = '0.9.9'
+__version__ = '1.3'
 
 apilevel = '2.0'
 threadsafety = 1
 paramstyle = 'qmark'
 
-# Exceptions required by Python Database API
+api = None
 
+def load_api():
+    if not api:
+        setattr(sys.modules[__name__],'api',fbclient_API())
+    return api
+
+# Exceptions required by Python Database API
 
 class Warning(Exception):
     """Exception raised for important warnings like data
@@ -302,6 +331,14 @@ ISOLATION_LEVEL_READ_COMMITED_RO = bs([isc_tpb_version3,
                                        isc_tpb_read_committed, 
                                        isc_tpb_rec_version])
 
+# ODS constants
+
+ODS_FB_20 = 11.0
+ODS_FB_21 = 11.1
+ODS_FB_25 = 11.2
+
+# Private constants
+
 _SIZE_OF_SHORT = ctypes.sizeof(ctypes.c_short)
 
 _tenTo = [10 ** x for x in range(20)]
@@ -347,12 +384,12 @@ def xsqlda_factory(size):
             ('sqldabc', ISC_LONG),
             ('sqln', ISC_SHORT),
             ('sqld', ISC_SHORT),
-            ('sqlvar', ibase.XSQLVAR * size),
+            ('sqlvar', XSQLVAR * size),
         ]
         __xsqlda_cache[size] = XSQLDA
         cls = XSQLDA
     xsqlda = cls()
-    xsqlda.version = ibase.SQLDA_version1
+    xsqlda.version = SQLDA_version1
     xsqlda.sqln = size
     return xsqlda
 
@@ -360,7 +397,7 @@ def tebarray_factory(size):
     if size in __tebarray_cache:
         cls = __tebarray_cache[size]
     else:
-        cls = ibase.ISC_TEB * size
+        cls = ISC_TEB * size
         __xsqlda_cache[size] = cls
     teb_array = cls()
     return teb_array
@@ -405,13 +442,13 @@ def bytes_to_bint(b):           # Read as big endian
 def bytes_to_int(b):            # Read as little endian.
     len_b = len(b)
     if len_b == 1:
-        fmt = 'B'
+        fmt = 'b'
     elif len_b == 2:
-        fmt = '<H'
+        fmt = '<h'
     elif len_b == 4:
-        fmt = '<L'
+        fmt = '<l'
     elif len_b == 8:
-        fmt = '<Q'
+        fmt = '<q'
     else:
         raise InternalError
     return struct.unpack(fmt, b)[0]
@@ -432,26 +469,26 @@ def bytes_to_uint(b):            # Read as little endian.
 
 def bint_to_bytes(val, nbytes):  # Convert int value to big endian bytes.
     if nbytes == 1:
-        fmt = 'B'
+        fmt = 'b'
     elif nbytes == 2:
-        fmt = '>H'
+        fmt = '>h'
     elif nbytes == 4:
-        fmt = '>L'
+        fmt = '>l'
     elif nbytes == 8:
-        fmt = '>Q'
+        fmt = '>q'
     else:
         raise InternalError
     return struct.pack(fmt, val)
 
 def int_to_bytes(val, nbytes):  # Convert int value to little endian bytes.
     if nbytes == 1:
-        fmt = 'B'
+        fmt = 'b'
     elif nbytes == 2:
-        fmt = '<H'
+        fmt = '<h'
     elif nbytes == 4:
-        fmt = '<L'
+        fmt = '<l'
     elif nbytes == 8:
-        fmt = '<Q'
+        fmt = '<q'
     else:
         raise InternalError
     return struct.pack(fmt, val)
@@ -478,7 +515,7 @@ def exception_from_status(error, status, preamble=None):
 
     if preamble:
         msglist.append(preamble)
-    sqlcode = isc_sqlcode(status)
+    sqlcode = api.isc_sqlcode(status)
     error_code = status[1]
     msglist.append('- SQLCODE: %i' % sqlcode)
 
@@ -492,7 +529,7 @@ def exception_from_status(error, status, preamble=None):
     pvector = ctypes.cast(ctypes.addressof(status), ISC_STATUS_PTR)
 
     while True:
-        result = fb_interpret(msg, 512, pvector)
+        result = api.fb_interpret(msg, 512, pvector)
         if result != 0:
             if PYTHON_MAJOR_VER == 3:
                 ### Todo: trouble? decode from connection charset?
@@ -522,7 +559,7 @@ def build_dpb(user, password, sql_dialect, role, charset, buffers, force_write,
                                int2byte(sLen), s)
         params.append(newEntry)
 
-    def addInt(codeAsByte, value):
+    def addByte(codeAsByte, value):
         if (not isinstance(value, (int, mylong))
             or value < 0 or value > 255):
             raise ProgrammingError("The value for an integer DPB code must be"
@@ -531,9 +568,15 @@ def build_dpb(user, password, sql_dialect, role, charset, buffers, force_write,
         newEntry = struct.pack('ccc', int2byte(codeAsByte),
                                b('\x01'), int2byte(value))
         params.append(newEntry)
+    def addInt(codeAsByte, value):
+        if not isinstance(value, (int, mylong)):
+            raise ProgrammingError("The value for an integer DPB code must be"
+                                   " an int or long."
+                                   )
+        newEntry = struct.pack('=ccI', int2byte(codeAsByte),
+                               b('\x04'), value)
+        params.append(newEntry)
 
-    if charset:
-        charset = charset.upper()
     if user:
         addString(isc_dpb_user_name, user)
     if password:
@@ -541,23 +584,24 @@ def build_dpb(user, password, sql_dialect, role, charset, buffers, force_write,
     if role:
         addString(isc_dpb_sql_role_name, role)
     if sql_dialect:
-        addInt(isc_dpb_sql_dialect, sql_dialect)
+        addByte(isc_dpb_sql_dialect, sql_dialect)
     if charset:
-        addString(isc_dpb_lc_ctype, charset)
+        addString(isc_dpb_lc_ctype, charset.upper())
     if buffers:
         addInt(isc_dpb_num_buffers, buffers)
     if force_write:
-        addInt(isc_dpb_force_write, force_write)
+        addByte(isc_dpb_force_write, force_write)
     if no_reserve:
-        addInt(isc_dpb_no_reserve, no_reserve)
+        addByte(isc_dpb_no_reserve, no_reserve)
     if db_key_scope:
-        addInt(isc_dpb_dbkey_scope, db_key_scope)
+        addByte(isc_dpb_dbkey_scope, db_key_scope)
     return b('').join(params)
 
 def connect(dsn='', user=None, password=None, host=None, port=3050, database=None,
             sql_dialect=3, role=None, charset=None, buffers=None,
             force_write=None, no_reserve=None, db_key_scope=None,
-            isolation_level=ISOLATION_LEVEL_READ_COMMITED):
+            isolation_level=ISOLATION_LEVEL_READ_COMMITED,
+            connection_class=None):
     """
     Establish a connection to database. 
     
@@ -577,6 +621,9 @@ def connect(dsn='', user=None, password=None, host=None, port=3050, database=Non
     :param integer db_key_scope: DBKEY scope override for connection.
     :param isolation_level: Default transaction isolation level for connection **(not used)**.
     :type isolation_level: 0, 1, 2 or 3
+    :param connection_class: Custom connection class
+    :type connection_class: subclass of :class:`Connection`
+    
     :returns: Connection to database.
     :rtype: :class:`Connection` instance.
     
@@ -595,6 +642,11 @@ def connect(dsn='', user=None, password=None, host=None, port=3050, database=Non
        con = fdb.connect(dsn='host:/path/database.fdb', user='sysdba', password='pass', charset='UTF8')
        con = fdb.connect(host='myhost', database='/path/database.fdb', user='sysdba', password='pass', charset='UTF8')
     """
+    load_api()
+    if connection_class == None:
+        connection_class = Connection
+    if not issubclass(connection_class,Connection):
+        raise ProgrammingError("'connection_class' must be subclass of Connection")
     if not user:
         user = os.environ.get('ISC_USER', None)
     if not password:
@@ -626,57 +678,159 @@ def connect(dsn='', user=None, password=None, host=None, port=3050, database=Non
             dsn = database
 
     dsn = b(dsn,_FS_ENCODING)
-    
+    if charset:
+        charset = charset.upper()
     dpb = build_dpb(user, password, sql_dialect, role, charset, buffers,
                     force_write, no_reserve, db_key_scope)
 
     _isc_status = ISC_STATUS_ARRAY()
-    _db_handle = ibase.isc_db_handle(0)
+    _db_handle = isc_db_handle(0)
 
-    ibase.isc_attach_database(_isc_status, len(dsn), dsn, _db_handle, len(dpb),
+    api.isc_attach_database(_isc_status, len(dsn), dsn, _db_handle, len(dpb),
                               dpb)
     if db_api_error(_isc_status):
         raise exception_from_status(DatabaseError, _isc_status,
                                     "Error while connecting to database:")
 
-    return Connection(_db_handle, dpb, sql_dialect, charset)
+    return connection_class(_db_handle, dpb, sql_dialect, charset)
 
-def create_database(sql, sql_dialect=3):
+def create_database(sql='', sql_dialect=3, dsn='', user=None, password=None, 
+                    host=None, port=3050, database=None, 
+                    page_size=None, length=None, charset=None, files=None,
+                    connection_class=None):
     """
-    Creates a new database with the supplied "CREATE DATABASE" statement.
+    Creates a new database. Parameters could be specified either by supplied 
+    "CREATE DATABASE" statement, or set of database parameters.
     
     :param sql: "CREATE DATABASE" statement.
     :param sql_dialect: SQL Dialect for newly created database.
     :type sql_dialect: 1 or 3
+    :param dsn: Connection string in format [host[/port]]:database
+    :param string user: User name. If not specified, fdb attempts to use ISC_USER envar.
+    :param string password: User password. If not specified, fdb attempts to use ISC_PASSWORD envar.
+    :param string host: Server host machine specification.
+    :param integer port: Port used by Firebird server **(not used)**.
+    :param string database: Database specification (file spec. or alias)
+    :param integer page_size: Database page size.
+    :param integer length: Database size in pages.
+    :param string charset: Character set for connection.
+    :param string files: Specification of secondary database files.
+    :param connection_class: Custom connection class
+    :type connection_class: subclass of :class:`Connection`
+
     :returns: Connection to the newly created database.
     :rtype: :class:`Connection` instance.
     
-    :raises ProgrammingError: When database creation fails.
+    :raises ProgrammingError: For bad parameter values.
+    :raises DatabaseError: When database creation fails.
 
     Example:
     
     .. code-block:: python
     
-       con = fdb.create_database("create database '/temp/db.db' user 'sysdba' password 'pass'")
+       con = fdb.create_database("create database '/temp/db.fdb' user 'sysdba' password 'pass'")
+       con = fdb.create_database(dsn='/temp/db.fdb',user='sysdba',password='pass',page_size=8192)
     """
-    if isinstance(sql, myunicode):
-        sql = sql.encode(_FS_ENCODING)
+    load_api()
+    if connection_class == None:
+        connection_class = Connection
+    if not issubclass(connection_class,Connection):
+        raise ProgrammingError("'connection_class' must be subclass of Connection")
+    
+    # Database to create must be specified by either `sql` or other parameters.
+    if sql:
+        if isinstance(sql, myunicode):
+            sql = sql.encode(_FS_ENCODING)
+    else:
+        if not user:
+            user = os.environ.get('ISC_USER', None)
+        if not password:
+            password = os.environ.get('ISC_PASSWORD', None)
+        if sql_dialect not in [1, 2, 3]:
+            raise ProgrammingError("SQl Dialect must be either 1, 2 or 3")
+    
+        if ((not dsn and not host and not database)
+            or (dsn and (host or database))
+            or (host and not database)
+            ):
+            raise ProgrammingError(
+                "Must supply one of:\n"
+                " 1. keyword argument dsn='host:/path/to/database'\n"
+                " 2. both keyword arguments host='host' and"
+                " database='/path/to/database'\n"
+                " 3. only keyword argument database='/path/to/database'"
+            )
+        if not dsn:
+            if host and host.endswith(':'):
+                raise ProgrammingError("Host must not end with a colon."
+                    " You should specify host='%s' rather than host='%s'."
+                    % (host[:-1], host)
+                    )
+            elif host:
+                dsn = '%s:%s' % (host, database)
+            else:
+                dsn = database
+    
+        dsn = b(dsn,_FS_ENCODING)
+        
+        # Parameter checks
+        
+        sql = "create database '%s' user '%s' password '%s'" % (dsn,user,password)
+        if page_size:
+            sql = '%s page_size %i' % (sql,page_size)
+        if length:
+            sql = '%s length %i' % (sql,length)
+        if charset:
+            sql = '%s default character set %s' % (sql,charset.upper())
+        if files:
+            sql = '%s %s' % (sql,files)
         
     isc_status = ISC_STATUS_ARRAY(0)
-    trans_handle = ibase.isc_tr_handle(0)
-    db_handle = ibase.isc_db_handle(0)
+    trans_handle = isc_tr_handle(0)
+    db_handle = isc_db_handle(0)
     xsqlda = xsqlda_factory(1)
 
     # For yet unknown reason, the isc_dsql_execute_immediate segfaults when
     # NULL (None) is passed as XSQLDA, so we provide one here
-    isc_dsql_execute_immediate(isc_status, db_handle, trans_handle,
+    api.isc_dsql_execute_immediate(isc_status, db_handle, trans_handle,
             ctypes.c_ushort(len(sql)), sql, sql_dialect,
             ctypes.cast(ctypes.pointer(xsqlda),XSQLDA_PTR))
     if db_api_error(isc_status):
-        raise exception_from_status(ProgrammingError, isc_status,
+        raise exception_from_status(DatabaseError, isc_status,
                                     "Error while creating database:")
 
-    return Connection(db_handle)
+    return connection_class(db_handle)
+
+class TransactionContext(object):
+    """Context Manager that manages transaction for object passed to constructor.
+    
+    Performs `rollback` if exception is thrown inside code block, otherwise
+    performs `commit` at the end of block.
+    
+    Example::
+    
+       with TransactionContext(my_transaction):
+           cursor.execute('insert into tableA (x,y) values (?,?)',(x,y))
+           cursor.execute('insert into tableB (x,y) values (?,?)',(x,y))
+    
+    """
+    #: Transaction-like object this instance manages.
+    transaction = None
+    def __init__(self,transaction):
+        """
+        :param transaction: Any object that supports `begin()`, `commit()` and
+            `rollback()`.
+        """
+        self.transaction = transaction
+    def __enter__(self):
+        self.transaction.begin()
+        return self.transaction
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type == None:
+            self.transaction.commit()
+        else:
+            self.transaction.rollback()
+
 
 class Connection(object):
     """
@@ -689,8 +843,22 @@ class Connection(object):
        :func:`connect` or :func:`create_database` to get Connection instances.
     """
 
-    def __init__(self, db_handle, dpb=None, sql_dialect=3,
-                 charset=None):
+    # PEP 249 (Python DB API 2.0) extensions
+    Warning = Warning
+    Error = Error
+    InterfaceError = InterfaceError
+    DatabaseError = DatabaseError
+    DataError = DataError
+    OperationalError = OperationalError
+    IntegrityError = IntegrityError
+    InternalError = InternalError
+    ProgrammingError = ProgrammingError
+    NotSupportedError = NotSupportedError
+
+    #: (integer) sql_dialect for this connection, do not change.
+    sql_dialect = 3
+    
+    def __init__(self, db_handle, dpb=None, sql_dialect=3, charset=None):
         """
         :param db_handle: Database handle provided by factory function.
         :param dpb: Database Parameter Block associated with database handle.
@@ -698,31 +866,41 @@ class Connection(object):
         :param string charset: Character set associated with database handle.
         """
         if charset:
-            self._charset = charset.upper()
+            self.__charset = charset.upper()
         else:
-            self._charset = None
+            self.__charset = None
         self._python_charset = charset_map.get(self.charset, self.charset)
 
         self._default_tpb = ISOLATION_LEVEL_READ_COMMITED
+        # Main transaction
         self._main_transaction = Transaction([self], 
                                              default_tpb=self._default_tpb)
-        self._transactions = [self._main_transaction]
+        # ReadOnly ReadCommitted transaction
+        self._query_transaction = Transaction([self], 
+                                              default_tpb=ISOLATION_LEVEL_READ_COMMITED_RO)
+        self._transactions = [self._main_transaction,self._query_transaction]
         self.__precision_cache = {}
         self.__sqlsubtype_cache = {}
         self.__conduits = []
         self.__group = None
+        self.__schema = None
+        self.__monitor = None
+        self.__ods = None
 
-        #: (integer) sql_dialect for this connection, do not change.
+        # (integer) sql_dialect for this connection, do not change.
         self.sql_dialect = sql_dialect
         self._dpb = dpb
         self._isc_status = ISC_STATUS_ARRAY()
         self._db_handle = db_handle
         # Cursor for internal use
-        self.__ic = Cursor(self, self.main_transaction)
+        self.__ic = self.query_transaction.cursor()
         self.__ic._set_as_internal()
-    
-    def __remove_cursor(self, cursor_ref):
-        self._cursors.remove(cursor_ref)
+        # Get Firebird engine version
+        verstr = self.db_info([isc_info_firebird_version])[isc_info_firebird_version]
+        x = verstr.split()
+        (x,self.__version) = x[0].split('V')
+        x = self.__version.split('.')
+        self.__engine_version = float('%s.%s' % (x[0],x[1]))
     def __remove_group(self, group_ref):
         self.__group = None
     def __ensure_group_membership(self, must_be_member, err_msg):
@@ -738,27 +916,57 @@ class Connection(object):
     def __close(self, detach=True):
         if self._db_handle != None:
             self.__ic.close()
-            for conduit in self.__conduits:
-                conduit.close()
-            for transaction in self._transactions:
-                transaction.default_action = 'rollback' # Required by Python DB API 2.0
-                transaction.close()
-            if detach:
-                ibase.isc_detach_database(self._isc_status, self._db_handle)
-            self._db_handle = None
+            del self.__ic
+            try:
+                for conduit in self.__conduits:
+                    conduit.close()
+                for transaction in self._transactions:
+                    transaction.default_action = 'rollback' # Required by Python DB API 2.0
+                    transaction.close()
+                if detach:
+                    api.isc_detach_database(self._isc_status, self._db_handle)
+            finally:
+                self._db_handle = None
     def __get_main_transaction(self):
         return self._main_transaction
+    def __get_query_transaction(self):
+        return self._query_transaction
     def __get_transactions(self):
         return tuple(self._transactions)
     def __get_closed(self):
         return self._db_handle == None
     def __get_server_version(self):
-        return self.db_info([ibase.isc_info_version])[ibase.isc_info_version]
-        #return self.db_info([ibase.isc_info_firebird_version])[ibase.isc_info_firebird_version]
+        return self.db_info([isc_info_version])[isc_info_version]
+    def __get_firebird_version(self):
+        return self.db_info([isc_info_firebird_version])[isc_info_firebird_version]
+    def __get_version(self):
+        return self.__version
+    def __get_engine_version(self):
+        return self.__engine_version
     def __get_default_tpb(self):
         return self._default_tpb
     def __set_default_tpb(self, value):
         self._default_tpb = _validateTPB(value)
+    def __get_charset(self):
+        return self.__charset
+    def __set_charset(self, value):
+        # More informative error message:
+        raise AttributeError("A connection's 'charset' property can be"
+            " specified upon Connection creation as a keyword argument to"
+            " fdb.connect, but it cannot be modified thereafter."
+            )
+    def __get_group(self):
+        if self.__group:
+            return self.__group()
+        else:
+            return None
+    def __get_ods(self):
+        if not self.__ods:
+            raw = self.db_info([ibase.isc_info_ods_version,
+                                ibase.isc_info_ods_minor_version])
+            self.__ods = float('%d.%d' % (raw[ibase.isc_info_ods_version],
+                                          raw[ibase.isc_info_ods_minor_version]))
+        return self.__ods
     def __parse_date(self, raw_value):
         "Convert raw data to datetime.date"
         nday = bytes_to_int(raw_value) + 678882
@@ -789,18 +997,34 @@ class Connection(object):
         m = m % 60
         s = s % 60
         return (h, m, s, (n % 10000) * 100)
+    def _get_schema(self):
+        if not self.__schema:
+            self.__schema = schema.Schema()
+            self.__schema.bind(self)
+            self.__schema._set_as_internal()
+        return self.__schema
+    def _get_monitor(self):
+        if not self.__monitor:
+            if self.ods >= ODS_FB_21:
+                self.__monitor = monitor.Monitor()
+                self.__monitor.bind(self)
+                self.__monitor._set_as_internal()
+            else:
+                raise ProgrammingError("Monitoring tables are available only " \
+                                       "for databases with ODS 11.1 and higher.")
+        return self.__monitor
     def _get_array_sqlsubtype(self, relation, column):
         subtype = self.__sqlsubtype_cache.get((relation,column))
         if subtype is not None:
             return subtype
         self.__ic.execute("SELECT FIELD_SPEC.RDB$FIELD_SUB_TYPE"
-                          " FROM RDB$FIELDS FIELD_SPEC, RDB$RELATION_FIELDS REL_FIELDS"
-                          " WHERE"
-                          " FIELD_SPEC.RDB$FIELD_NAME = REL_FIELDS.RDB$FIELD_SOURCE"
-                          " AND REL_FIELDS.RDB$RELATION_NAME = ?"
-                          " AND REL_FIELDS.RDB$FIELD_NAME = ?",
-                          (p3fix(relation,self._python_charset),
-                           p3fix(column,self._python_charset)))
+                         " FROM RDB$FIELDS FIELD_SPEC, RDB$RELATION_FIELDS REL_FIELDS"
+                         " WHERE"
+                         " FIELD_SPEC.RDB$FIELD_NAME = REL_FIELDS.RDB$FIELD_SOURCE"
+                         " AND REL_FIELDS.RDB$RELATION_NAME = ?"
+                         " AND REL_FIELDS.RDB$FIELD_NAME = ?",
+                         (p3fix(relation,self._python_charset),
+                          p3fix(column,self._python_charset)))
         result = self.__ic.fetchone()
         self.__ic.close()
         if result:
@@ -822,15 +1046,15 @@ class Connection(object):
             return precision
         # First, try table
         self.__ic.execute("SELECT FIELD_SPEC.RDB$FIELD_PRECISION"
-                          " FROM RDB$FIELDS FIELD_SPEC,"
-                          " RDB$RELATION_FIELDS REL_FIELDS"
-                          " WHERE"
-                          " FIELD_SPEC.RDB$FIELD_NAME ="
-                          " REL_FIELDS.RDB$FIELD_SOURCE"
-                          " AND REL_FIELDS.RDB$RELATION_NAME = ?"
-                          " AND REL_FIELDS.RDB$FIELD_NAME = ?",
-                          (p3fix(sqlvar.relname,self._python_charset),
-                           p3fix(sqlvar.sqlname,self._python_charset)))
+                         " FROM RDB$FIELDS FIELD_SPEC,"
+                         " RDB$RELATION_FIELDS REL_FIELDS"
+                         " WHERE"
+                         " FIELD_SPEC.RDB$FIELD_NAME ="
+                         " REL_FIELDS.RDB$FIELD_SOURCE"
+                         " AND REL_FIELDS.RDB$RELATION_NAME = ?"
+                         " AND REL_FIELDS.RDB$FIELD_NAME = ?",
+                         (p3fix(sqlvar.relname,self._python_charset),
+                          p3fix(sqlvar.sqlname,self._python_charset)))
         result = self.__ic.fetchone()
         self.__ic.close()
         if result:
@@ -838,16 +1062,16 @@ class Connection(object):
             return result[0]
         # Next, try stored procedure output parameter
         self.__ic.execute("SELECT FIELD_SPEC.RDB$FIELD_PRECISION"
-                          " FROM RDB$FIELDS FIELD_SPEC,"
-                          " RDB$PROCEDURE_PARAMETERS REL_FIELDS"
-                          " WHERE"
-                          " FIELD_SPEC.RDB$FIELD_NAME ="
-                          " REL_FIELDS.RDB$FIELD_SOURCE"
-                          " AND RDB$PROCEDURE_NAME = ?"
-                          " AND RDB$PARAMETER_NAME = ?"
-                          " AND RDB$PARAMETER_TYPE = 1",
-                          (p3fix(sqlvar.relname,self._python_charset),
-                           p3fix(sqlvar.sqlname,self._python_charset)))
+                         " FROM RDB$FIELDS FIELD_SPEC,"
+                         " RDB$PROCEDURE_PARAMETERS REL_FIELDS"
+                         " WHERE"
+                         " FIELD_SPEC.RDB$FIELD_NAME ="
+                         " REL_FIELDS.RDB$FIELD_SOURCE"
+                         " AND RDB$PROCEDURE_NAME = ?"
+                         " AND RDB$PARAMETER_NAME = ?"
+                         " AND RDB$PARAMETER_TYPE = 1",
+                         (p3fix(sqlvar.relname,self._python_charset),
+                          p3fix(sqlvar.sqlname,self._python_charset)))
         result = self.__ic.fetchone()
         self.__ic.close()
         if result:
@@ -866,9 +1090,9 @@ class Connection(object):
         """
         self.__ensure_group_membership(False, "Cannot drop database via"
                     " connection that is part of a ConnectionGroup.")
-        saved_handle = ibase.isc_db_handle(self._db_handle.value)
+        saved_handle = isc_db_handle(self._db_handle.value)
         self.__close(detach=False)
-        ibase.isc_drop_database(self._isc_status, saved_handle)
+        api.isc_drop_database(self._isc_status, saved_handle)
         if db_api_error(self._isc_status):
             self._db_handle = saved_handle
             raise exception_from_status(DatabaseError, self._isc_status,
@@ -935,7 +1159,7 @@ class Connection(object):
         buf_size = 256
         while True:
             res_buf = int2byte(0) * buf_size
-            ibase.isc_database_info(self._isc_status, self._db_handle,
+            api.isc_database_info(self._isc_status, self._db_handle,
                                     len(request_buffer), request_buffer,
                                     len(res_buf), res_buf)
             if db_api_error(self._isc_status):
@@ -947,7 +1171,7 @@ class Connection(object):
                     break
                 else:
                     i -= 1
-            if ord2(res_buf[i]) == ibase.isc_info_truncated:
+            if ord2(res_buf[i]) == isc_info_truncated:
                 if buf_size < SHRT_MAX:
                     buf_size *= 2
                     if buf_size > SHRT_MAX:
@@ -1365,14 +1589,6 @@ class Connection(object):
     def __del__(self):
         if self._db_handle != None:
             self.__close()
-    def _get_charset(self):
-        return self._charset
-    def _set_charset(self, value):
-        # More informative error message:
-        raise AttributeError("A connection's 'charset' property can be"
-            " specified upon Connection creation as a keyword argument to"
-            " kinterbasdb.connect, but it cannot be modified thereafter."
-            )
     def _set_group(self, group):
         # This package-private method allows ConnectionGroup's membership
         # management functionality to bypass the conceptually read-only nature
@@ -1381,31 +1597,93 @@ class Connection(object):
             self.__group = weakref.ref(group,self.__remove_group)
         else:
             self.__group = None
-    def _group_get(self):
-        if self.__group:
-            return self.__group()
-        else:
-            return None
     #: (Read Only) :class:`ConnectionGroup` this Connection belongs to, or None.
-    group = property(_group_get)
+    group = property(__get_group)
     #: (Read Only) (string) Connection Character set name.
-    charset = property(_get_charset, _set_charset)
+    charset = property(__get_charset, __set_charset)
     #: (Read Only) (tuple) :class:`Transaction` instances associated with this connection.
     transactions = property(__get_transactions)
     #: (Read Only) Main :class:`Transaction` instance for this connection
     #: Connection methods :meth:`begin`, :meth:`savepoint`, :meth:`commit` and
     #: :meth:`rollback` are delegated to this transaction object.
     main_transaction = property(__get_main_transaction)
+    #: (Read Only) Special "query" :class:`Transaction` instance for this connection.
+    #: This is ReadOnly ReadCommitted transaction that could be active indefinitely
+    #: without blocking garbage collection. It's used internally to query metadata,
+    #: but it's generally useful.
+    query_transaction = property(__get_query_transaction)
     #: (Read/Write) Deafult Transaction Parameter Block used for all newly started transactions.
     default_tpb = property(__get_default_tpb, __set_default_tpb)
     #: (Read Only) True if connection is closed.
     closed = property(__get_closed)
     #: (Read Only) (string) Version string returned by server for this connection.
+    #: This version string contains InterBase-friendly engine version number, i.e.
+    #: version that takes into account inherited IB version number.
+    #: For example it's 'LI-V6.3.2.26540 Firebird 2.5' for Firebird 2.5.2
     server_version = property(__get_server_version)
+    #: (Read Only) (string) Version string returned by server for this connection.
+    #: This version string contains Firebird engine version number, i.e.
+    #: version that DOES NOT takes into account inherited IB version number.
+    #: For example it's 'LI-V2.5.2.26540 Firebird 2.5' for Firebird 2.5.2
+    firebird_version = property(__get_firebird_version)
+    #: (Read Only) (string) Firebird version number string of connected server.
+    #: Uses Firebird version numbers in form: major.minor.subrelease.build
+    version = property(__get_version)
+    #: (Read Only) (float) Firebird version number of connected server. Only major.minor version.
+    engine_version = property(__get_engine_version)
+    #: (Read Only) (:class:`~fdb.schema.Schema`) Database metadata object.
+    schema = utils.LateBindingProperty(_get_schema)
+    #: (Read Only) (float) On-Disk Structure (ODS) version.
+    ods = property(__get_ods)
+    
+    #: (Read Only) (:class:`~fdb.monitor.Monitor`) Database monitoring object.
+    monitor = utils.LateBindingProperty(_get_monitor)
+
+
+@utils.embed_attributes(schema.Schema,'schema')
+class ConnectionWithSchema(Connection):
+    """:class:`Connection` descendant that exposes all attributes of encapsulated
+    :class:`~fdb.schema.Schema` instance directly as connection attributes, except 
+    :meth:`~fdb.schema.Schema.close` and :meth:`~fdb.schema.Schema.bind`, and 
+    those attributes that are already defined by Connection class.
+    
+    .. note:: 
+    
+       Use `connection_class` parametr of :func:`connect` or :func:`create_database`
+       to create connections with direct schema interface.
+    """
+    def __init__(self, db_handle, dpb=None, sql_dialect=3, charset=None):
+        super(ConnectionWithSchema,self).__init__(db_handle,dpb,sql_dialect,charset)
+        self.__schema = schema.Schema()
+        self.__schema.bind(self)
+        self.__schema._set_as_internal()
+        # Injecting callables bound to embedded Schema instance
+        for attr in dir(self.__schema):
+            if not (attr.find('__') >= 0 or attr.startswith('_') 
+                    or attr in ['close','bind'] or hasattr(self,attr)):
+                val = getattr(self.__schema,attr)
+                if callable(val):
+                    setattr(self,attr,val)
+                    #print 'injecting callable',attr
+    def _get_schema(self):
+        return self.__schema
+
 
 class EventBlock(object):
+    """Represents Firebird API structure for block of events.
+    
+    .. warning: Internaly used class not intended for direct use.
     """
-    """
+    #: List of registered event names
+    event_names = []
+    #: length of internal event buffer
+    buf_length = 0
+    #: Event ID
+    event_id = 0
+    #: Event buffer
+    event_buf = None
+    #: Result buffer
+    result_buf = None
     def __init__(self,queue,db_handle,event_names):
         self.__first = True
         def callback(result, length, updated):
@@ -1418,31 +1696,32 @@ class EventBlock(object):
         self._isc_status = ISC_STATUS_ARRAY(0)
         self.event_names = list(event_names)
 
-        self.__results = ibase.RESULT_VECTOR(0)
+        self.__results = RESULT_VECTOR(0)
         self.__closed = False
-        self.__callback = ibase.ISC_EVENT_CALLBACK(callback)
+        self.__callback = ISC_EVENT_CALLBACK(callback)
         
-        self.event_buf = ctypes.pointer(ibase.ISC_UCHAR(0))
-        self.result_buf = ctypes.pointer(ibase.ISC_UCHAR(0))
+        self.event_buf = ctypes.pointer(ISC_UCHAR(0))
+        self.result_buf = ctypes.pointer(ISC_UCHAR(0))
         self.buf_length = 0
-        self.event_id = ibase.ISC_LONG(0)
+        self.event_id = ISC_LONG(0)
 
-        self.buf_length = ibase.isc_event_block(ctypes.pointer(self.event_buf),
+        self.buf_length = api.isc_event_block(ctypes.pointer(self.event_buf),
                                                   ctypes.pointer(self.result_buf),
                                                   *[b(x) for x in event_names])
         self.__wait_for_events()
     def __lt__(self,other):
         return self.event_id.value < other.event_id.value
     def __wait_for_events(self):
-        ibase.isc_que_events(self._isc_status,self._db_handle,self.event_id,
+        api.isc_que_events(self._isc_status,self._db_handle,self.event_id,
                              self.buf_length,self.event_buf,
                              self.__callback,self.result_buf)
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError, self._isc_status,
                                         "Error while waiting for events:")
     def count_and_reregister(self):
+        "Count event occurences and reregister interest in fut=rther notifications."
         result = {}
-        ibase.isc_event_counts(self.__results, self.buf_length,
+        api.isc_event_counts(self.__results, self.buf_length,
                                self.event_buf, self.result_buf)
         if self.__first:
             # Ignore the first call, it's for setting up the table
@@ -1455,8 +1734,9 @@ class EventBlock(object):
         self.__wait_for_events()
         return result
     def close(self):
+        "Close this block canceling managed events."
         if not self.closed:
-            ibase.isc_cancel_events(self._isc_status,self._db_handle,self.event_id)
+            api.isc_cancel_events(self._isc_status,self._db_handle,self.event_id)
             self.__closed = True
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
@@ -1465,6 +1745,7 @@ class EventBlock(object):
         return self.__closed
     def __del__(self):
         self.close()
+    #: (ReadOnly) True if block is closed for business
     closed = property(__get_closed)
 
 
@@ -1585,30 +1866,38 @@ class PreparedStatement(object):
        PreparedStatements are bound to :class:`Cursor` instance that created them,
        and using them with other Cursor would report an error.
     """
-    #: Constant for internal use by this class.
+    #: Constant for internal use by this class. Do not change!
     RESULT_SET_EXHAUSTED = 100
-    #: Constant for internal use by this class.
+    #: Constant for internal use by this class. Do not change!
     NO_FETCH_ATTEMPTED_YET = -1
+    #: :class:`Cursor` instance that manages this PreparedStatement. Do not change!
+    cursor = None
+    #: (integer) An integer code that can be matched against the statement 
+    #: type constants in the isc_info_sql_stmt_* series. Do not change!
+    statement_type = 0
+    #: The number of input parameters the statement requires. Do not change!
+    n_input_params = 0
+    #: The number of output fields the statement produces. Do not change!
+    n_output_params = 0
 
     def __init__(self, operation, cursor, internal=True):
         self.__sql = operation
         self.__internal = internal
         if internal:
-            self.cursor = weakref.ref(cursor)
+            self.cursor = weakref.proxy(cursor,self.__cursor_deleted)
         else:
-            #: :class:`Cursor` instance that manages this PreparedStatement.
             self.cursor = cursor
-        self._stmt_handle = None  # isc_stmt_handle(0)
+        self._stmt_handle = None
         self._isc_status = ISC_STATUS_ARRAY()
-        #: Internal XSQLDA structure for output values.
-        self.out_sqlda = xsqlda_factory(10)
-        #: Internal XSQLDA structure for input values.
-        self.in_sqlda = xsqlda_factory(10)
-        #: Internal list to save original input SQLDA structures when they has 
-        #: to temporarily augmented.
-        self.in_sqlda_save = []
-        #: (integer) An integer code that can be matched against the statement 
-        #: type constants in the isc_info_sql_stmt_* series.
+        # Internal XSQLDA structure for output values.
+        self._out_sqlda = xsqlda_factory(10)
+        # Internal XSQLDA structure for input values.
+        self._in_sqlda = xsqlda_factory(10)
+        # Internal list to save original input SQLDA structures when they has 
+        # to temporarily augmented.
+        self._in_sqlda_save = []
+        # (integer) An integer code that can be matched against the statement 
+        # type constants in the isc_info_sql_stmt_* series.
         self.statement_type = None
         self.__streamed_blobs = []
         self.__blob_readers = []
@@ -1617,16 +1906,15 @@ class PreparedStatement(object):
         self.__closed = False
         self.__description = None
         self.__output_cache = None
-        #self.out_buffer = None
-        self._last_fetch_status = ibase.ISC_STATUS(self.NO_FETCH_ATTEMPTED_YET)
-        connection = self.__get_connection()
+        self._last_fetch_status = ISC_STATUS(self.NO_FETCH_ATTEMPTED_YET)
+        connection = self.cursor._connection
         self.__charset = connection.charset
         self.__python_charset = connection._python_charset
         self.__sql_dialect = connection.sql_dialect
 
         # allocate statement handle
-        self._stmt_handle = ibase.isc_stmt_handle(0)
-        ibase.isc_dsql_allocate_statement(self._isc_status,
+        self._stmt_handle = isc_stmt_handle(0)
+        api.isc_dsql_allocate_statement(self._isc_status,
                                           connection._db_handle,
                                           self._stmt_handle)
         if db_api_error(self._isc_status):
@@ -1634,106 +1922,94 @@ class PreparedStatement(object):
                                         "Error while allocating SQL statement:")
         # prepare statement
         op = b(operation,self.__python_charset)
-        ibase.isc_dsql_prepare(self._isc_status,
-                               self.__get_transaction()._tr_handle,
+        api.isc_dsql_prepare(self._isc_status,
+                               self.cursor._transaction._tr_handle,
                                self._stmt_handle,
                                len(op),op,
                                self.__sql_dialect,
-                               ctypes.cast(ctypes.pointer(self.out_sqlda),
+                               ctypes.cast(ctypes.pointer(self._out_sqlda),
                                            XSQLDA_PTR))
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError, self._isc_status,
                 "Error while preparing SQL statement:")
         # Determine statement type
         info = b(' ') * 20
-        ibase.isc_dsql_sql_info(self._isc_status, self._stmt_handle, 1,
-                                bs([ibase.isc_info_sql_stmt_type]),
+        api.isc_dsql_sql_info(self._isc_status, self._stmt_handle, 1,
+                                bs([isc_info_sql_stmt_type]),
                                 len(info), info)
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError, self._isc_status,
                 "Error while determining SQL statement type:")
-        if ord2(info[0]) != ibase.isc_info_sql_stmt_type:
+        if ord2(info[0]) != isc_info_sql_stmt_type:
             raise InternalError("Cursor.execute, determine statement type:\n"
                 "first byte must be 'isc_info_sql_stmt_type'")
         self.statement_type = bytes_to_int(info[3:3 + bytes_to_int(info[1:3])])
         # Init XSQLDA for input parameters
-        ibase.isc_dsql_describe_bind(self._isc_status, self._stmt_handle,
+        api.isc_dsql_describe_bind(self._isc_status, self._stmt_handle,
                                      self.__sql_dialect,
-                                     ctypes.cast(ctypes.pointer(self.in_sqlda),
+                                     ctypes.cast(ctypes.pointer(self._in_sqlda),
                                                  XSQLDA_PTR))
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError, self._isc_status,
                 "Error while determining SQL statement parameters:")
-        if self.in_sqlda.sqld > self.in_sqlda.sqln:
-            self.in_sqlda = xsqlda_factory(self.in_sqlda.sqld)
-            ibase.isc_dsql_describe_bind(self._isc_status, self._stmt_handle,
+        if self._in_sqlda.sqld > self._in_sqlda.sqln:
+            self._in_sqlda = xsqlda_factory(self._in_sqlda.sqld)
+            api.isc_dsql_describe_bind(self._isc_status, self._stmt_handle,
                                          self.__sql_dialect,
-                                         ctypes.cast(ctypes.pointer(self.in_sqlda),
+                                         ctypes.cast(ctypes.pointer(self._in_sqlda),
                                                      XSQLDA_PTR))
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
                     "Error while determining SQL statement parameters:")
-        #: The number of input parameters the statement requires.
-        self.n_input_params = self.in_sqlda.sqld
+        # The number of input parameters the statement requires.
+        self.n_input_params = self._in_sqlda.sqld
         # record original type and size information so it can be restored for
         # subsequent executions (mind the implicit string conversions!)
-        for sqlvar in self.in_sqlda.sqlvar[:self.n_input_params]:
-            self.in_sqlda_save.append((sqlvar.sqltype, sqlvar.sqllen))
+        for sqlvar in self._in_sqlda.sqlvar[:self.n_input_params]:
+            self._in_sqlda_save.append((sqlvar.sqltype, sqlvar.sqllen))
         # Init output XSQLDA
-        ibase.isc_dsql_describe(self._isc_status, self._stmt_handle,
+        api.isc_dsql_describe(self._isc_status, self._stmt_handle,
                                 self.__sql_dialect,
-                                ctypes.cast(ctypes.pointer(self.out_sqlda),
+                                ctypes.cast(ctypes.pointer(self._out_sqlda),
                                             XSQLDA_PTR))
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError, self._isc_status,
                 "Error while determining SQL statement output:")
-        if self.out_sqlda.sqld > self.out_sqlda.sqln:
-            self.out_sqlda = xsqlda_factory(self.out_sqlda.sqld)
-            ibase.isc_dsql_describe(self._isc_status, self._stmt_handle,
+        if self._out_sqlda.sqld > self._out_sqlda.sqln:
+            self._out_sqlda = xsqlda_factory(self._out_sqlda.sqld)
+            api.isc_dsql_describe(self._isc_status, self._stmt_handle,
                                     self.__sql_dialect,
-                                    ctypes.cast(ctypes.pointer(self.out_sqlda),
+                                    ctypes.cast(ctypes.pointer(self._out_sqlda),
                                                 XSQLDA_PTR))
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
                     "Error while determining SQL statement output:")
-        #: The number of output fields the statement produces.
-        self.n_output_params = self.out_sqlda.sqld
-        self.__coerce_XSQLDA(self.out_sqlda)
+        # The number of output fields the statement produces.
+        self.n_output_params = self._out_sqlda.sqld
+        self.__coerce_XSQLDA(self._out_sqlda)
         self.__prepared = True
         self._name = None
+    def __cursor_deleted(self,obj):
+        self.cursor = None
     def __get_name(self):
         return self._name
     def __set_name(self,name):
         if self._name:
             raise ProgrammingError("Cursor's name has already been declared")
         self._set_cursor_name(name)
-    def __get_connection(self):
-        if self.__internal:
-            cur = self.cursor()
-        else:
-            cur = self.cursor
-        if cur:
-            return cur._connection if isinstance(cur._connection,Connection) else cur._connection()
-        else:
-            return None
-    def __get_transaction(self):
-        if self.__internal:
-            return self.cursor()._transaction
-        else:
-            return self.cursor._transaction
     def __get_closed(self):
         return self.__closed
     def __get_plan(self):
         buf_size = 256
         while True:
             info = b(' ') * buf_size
-            ibase.isc_dsql_sql_info(self._isc_status, self._stmt_handle, 2,
-                                    bs([ibase.isc_info_sql_get_plan,isc_info_end]),
+            api.isc_dsql_sql_info(self._isc_status, self._stmt_handle, 2,
+                                    bs([isc_info_sql_get_plan,isc_info_end]),
                                     len(info), info)
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
                                             "Error while determining rowcount:")
-            if ord2(info[0]) == ibase.isc_info_truncated:
+            if ord2(info[0]) == isc_info_truncated:
                 if buf_size < SHRT_MAX:
                     buf_size *= 2
                     if buf_size > SHRT_MAX:
@@ -1745,7 +2021,7 @@ class PreparedStatement(object):
                 break
         if ord2(info[0]) == isc_info_end:
             return None
-        if ord2(info[0]) != ibase.isc_info_sql_get_plan:
+        if ord2(info[0]) != isc_info_sql_get_plan:
             raise IndentationError("Unexpected code in result buffer while"
                                    " querying SQL plan.")
         size = bytes_to_uint(info[1:_SIZE_OF_SHORT + 1])
@@ -1760,8 +2036,7 @@ class PreparedStatement(object):
     def __get_sql(self):
         return self.__sql
     def __is_fixed_point(self, dialect, data_type, subtype, scale):
-        return ((data_type in [SQL_SHORT, SQL_LONG,
-                               SQL_INT64]
+        return ((data_type in [SQL_SHORT, SQL_LONG, SQL_INT64]
                  and (subtype or scale)
                  )
                 or ((dialect < 3) and scale and
@@ -1828,8 +2103,8 @@ class PreparedStatement(object):
     def __get_description(self):
         if not self.__description:
             desc = []
-            if self.__prepared and (self.out_sqlda.sqld > 0):
-                for sqlvar in self.out_sqlda.sqlvar[:self.out_sqlda.sqld]:
+            if self.__prepared and (self._out_sqlda.sqld > 0):
+                for sqlvar in self._out_sqlda.sqlvar[:self._out_sqlda.sqld]:
                     # Field name (or alias)
                     sqlname = p3fix(sqlvar.sqlname[:sqlvar.sqlname_length],
                                     self.__python_charset)
@@ -1849,7 +2124,7 @@ class PreparedStatement(object):
                                       SQL_INT64]
                           and (sqlvar.sqlsubtype or scale)):
                         vtype = decimal.Decimal
-                        precision = (self.__get_connection()._determine_field_precision(sqlvar))
+                        precision = (self.cursor._connection._determine_field_precision(sqlvar))
                         dispsize = 20
                     elif vartype == SQL_SHORT:
                         vtype = IntType
@@ -1866,7 +2141,7 @@ class PreparedStatement(object):
                         # could be Fixed point
                         if (self.__sql_dialect < 3) and scale:
                             vtype = decimal.Decimal
-                            precision = (self.__get_connection()._determine_field_precision(sqlvar))
+                            precision = (self.cursor._connection._determine_field_precision(sqlvar))
                         else:
                             vtype = FloatType
                         dispsize = 17
@@ -1902,14 +2177,14 @@ class PreparedStatement(object):
                                     isc_info_sql_stmt_update,
                                     isc_info_sql_stmt_delete]):
             info = b(' ') * 64
-            ibase.isc_dsql_sql_info(self._isc_status, self._stmt_handle, 2,
-                                    bs([ibase.isc_info_sql_records,
+            api.isc_dsql_sql_info(self._isc_status, self._stmt_handle, 2,
+                                    bs([isc_info_sql_records,
                                         isc_info_end]),
                                     len(info), info)
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
                                             "Error while determining rowcount:")
-            if ord2(info[0]) != ibase.isc_info_sql_records:
+            if ord2(info[0]) != isc_info_sql_records:
                 raise InternalError("Cursor.get_rowcount:\n"
                                     "first byte must be 'isc_info_sql_records'")
             res_walk = 3
@@ -1920,13 +2195,13 @@ class PreparedStatement(object):
                 size = bytes_to_uint(info[res_walk:res_walk + short_size])
                 res_walk += short_size
                 count = bytes_to_uint(info[res_walk:res_walk + size])
-                if ((cur_count_type == ibase.isc_info_req_select_count
+                if ((cur_count_type == isc_info_req_select_count
                      and self.statement_type == isc_info_sql_stmt_select)
-                    or (cur_count_type == ibase.isc_info_req_insert_count
+                    or (cur_count_type == isc_info_req_insert_count
                         and self.statement_type == isc_info_sql_stmt_insert)
-                    or (cur_count_type == ibase.isc_info_req_update_count
+                    or (cur_count_type == isc_info_req_update_count
                         and self.statement_type == isc_info_sql_stmt_update)
-                    or (cur_count_type == ibase.isc_info_req_delete_count
+                    or (cur_count_type == isc_info_req_delete_count
                         and self.statement_type == isc_info_sql_stmt_delete)
                     ):
                     result = count
@@ -2004,7 +2279,7 @@ class PreparedStatement(object):
     def __coerce_XSQLDA(self, xsqlda):
         """Allocate space for SQLVAR data.
         """
-        for sqlvar in xsqlda.sqlvar[:self.out_sqlda.sqld]:
+        for sqlvar in xsqlda.sqlvar[:self._out_sqlda.sqld]:
             if sqlvar.sqltype & 1:
                 sqlvar.sqlind = ctypes.pointer(ISC_SHORT(0))
             vartype = sqlvar.sqltype & ~1
@@ -2073,7 +2348,7 @@ class PreparedStatement(object):
                     reallength = sqlvar.sqllen
                 value = value[:reallength]
             elif vartype == SQL_VARYING:
-                size = bytes_to_uint(sqlvar.sqldata[:1])
+                size = bytes_to_uint(sqlvar.sqldata[:2])
                 #value = ctypes.string_at(sqlvar.sqldata[2],2+size)
                 ### Todo: verify handling of P version differences
                 if PYTHON_MAJOR_VER == 3:
@@ -2104,7 +2379,7 @@ class PreparedStatement(object):
                 value = struct.unpack('d', sqlvar.sqldata[:sqlvar.sqllen])[0]
             elif vartype == SQL_BLOB:
                 val = sqlvar.sqldata[:sqlvar.sqllen]
-                blobid = ibase.ISC_QUAD(bytes_to_uint(val[:4]),
+                blobid = ISC_QUAD(bytes_to_uint(val[:4]),
                                         bytes_to_uint(val[4:sqlvar.sqllen]))
                 # Check if stream BLOB is requested instead materialized one
                 use_stream = False
@@ -2120,17 +2395,17 @@ class PreparedStatement(object):
                         use_stream = True
                 if use_stream:
                     # Stream BLOB
-                    value = BlobReader(blobid,self.__get_connection()._db_handle,
-                                       self.__get_transaction()._tr_handle,
+                    value = BlobReader(blobid,self.cursor._connection._db_handle,
+                                       self.cursor._transaction._tr_handle,
                                        sqlvar.sqlsubtype == 1,
                                        self.__charset)
                     self.__blob_readers.append(value)
                 else:
                     # Materialized BLOB
-                    blob_handle = ibase.isc_blob_handle()
-                    ibase.isc_open_blob2(self._isc_status,
-                                         self.__get_connection()._db_handle,
-                                         self.__get_transaction()._tr_handle,
+                    blob_handle = isc_blob_handle()
+                    api.isc_open_blob2(self._isc_status,
+                                         self.cursor._connection._db_handle,
+                                         self.cursor._transaction._tr_handle,
                                          blob_handle, blobid, 0, None)
                     if db_api_error(self._isc_status):
                         raise exception_from_status(DatabaseError,
@@ -2139,9 +2414,9 @@ class PreparedStatement(object):
                     # Get BLOB total length and max. size of segment
                     result = ctypes.cast(ctypes.create_string_buffer(20),
                                          buf_pointer)
-                    ibase.isc_blob_info(self._isc_status, blob_handle, 2,
-                                        bs([ibase.isc_info_blob_total_length,
-                                            ibase.isc_info_blob_max_segment]),
+                    api.isc_blob_info(self._isc_status, blob_handle, 2,
+                                        bs([isc_info_blob_total_length,
+                                            isc_info_blob_max_segment]),
                                         20, result)
                     if db_api_error(self._isc_status):
                         raise exception_from_status(DatabaseError,
@@ -2151,24 +2426,24 @@ class PreparedStatement(object):
                     while bytes_to_uint(result[offset]) != isc_info_end:
                         code = bytes_to_uint(result[offset])
                         offset += 1
-                        if code == ibase.isc_info_blob_total_length:
+                        if code == isc_info_blob_total_length:
                             length = bytes_to_uint(result[offset:offset + 2])
                             blob_length = bytes_to_uint(result[
                                 offset + 2:offset + 2 + length])
                             offset += length + 2
-                        elif code == ibase.isc_info_blob_max_segment:
+                        elif code == isc_info_blob_max_segment:
                             length = bytes_to_uint(result[offset:offset + 2])
                             segment_size = bytes_to_uint(result[
                                 offset + 2:offset + 2 + length])
                             offset += length + 2
                     # Load BLOB
                     allow_incomplete_segment_read = False
-                    status = ibase.ISC_STATUS(0)
+                    status = ISC_STATUS(0)
                     blob = ctypes.create_string_buffer(blob_length)
                     bytes_read = 0
                     bytes_actually_read = ctypes.c_ushort(0)
                     while bytes_read < blob_length:
-                        status = ibase.isc_get_segment(self._isc_status,
+                        status = api.isc_get_segment(self._isc_status,
                                                        blob_handle,
                                                        bytes_actually_read,
                                                        min(segment_size,
@@ -2176,7 +2451,7 @@ class PreparedStatement(object):
                                                        ctypes.byref(
                                                            blob, bytes_read))
                         if status != 0:
-                            if ((status == ibase.isc_segment)
+                            if ((status == isc_segment)
                                 and allow_incomplete_segment_read):
                                 bytes_read += bytes_actually_read.value
                             else:
@@ -2186,26 +2461,26 @@ class PreparedStatement(object):
                         else:
                             bytes_read += bytes_actually_read.value
                     # Finish
-                    ibase.isc_close_blob(self._isc_status, blob_handle)
+                    api.isc_close_blob(self._isc_status, blob_handle)
                     if db_api_error(self._isc_status):
                         raise exception_from_status(DatabaseError,
                                                     self._isc_status,
                                                     "Cursor.read_otput_blob/isc_close_blob:")
-                    value = blob.value
+                    value = blob.raw
                     if ((self.__charset or PYTHON_MAJOR_VER == 3) 
                         and sqlvar.sqlsubtype == 1):
                         value = b2u(value,self.__python_charset)
             elif vartype == SQL_ARRAY:
                 value = []
                 val = sqlvar.sqldata[:sqlvar.sqllen]
-                arrayid = ibase.ISC_QUAD(bytes_to_uint(val[:4]),
+                arrayid = ISC_QUAD(bytes_to_uint(val[:4]),
                                         bytes_to_uint(val[4:sqlvar.sqllen]))
-                arraydesc = ibase.ISC_ARRAY_DESC(0)
-                sqlsubtype = self.__get_connection()._get_array_sqlsubtype(sqlvar.relname,
+                arraydesc = ISC_ARRAY_DESC(0)
+                sqlsubtype = self.cursor._connection._get_array_sqlsubtype(sqlvar.relname,
                                                                            sqlvar.sqlname)
-                ibase.isc_array_lookup_bounds(self._isc_status,
-                                              self.__get_connection()._db_handle,
-                                              self.__get_transaction()._tr_handle,
+                api.isc_array_lookup_bounds(self._isc_status,
+                                              self.cursor._connection._db_handle,
+                                              self.cursor._transaction._tr_handle,
                                               sqlvar.relname,
                                               sqlvar.sqlname,
                                               arraydesc)
@@ -2216,7 +2491,7 @@ class PreparedStatement(object):
                 value_type = arraydesc.array_desc_dtype
                 value_scale = arraydesc.array_desc_scale
                 value_size = arraydesc.array_desc_length
-                if value_type in (ibase.blr_varying,ibase.blr_varying2):
+                if value_type in (blr_varying,blr_varying2):
                     value_size += 2
                 dimensions = []
                 total_num_elements = 1
@@ -2228,10 +2503,10 @@ class PreparedStatement(object):
                 buf = ctypes.create_string_buffer(total_size)
                 value_buffer = ctypes.cast(buf,
                                            buf_pointer)
-                tsize = ibase.ISC_LONG(total_size)
-                ibase.isc_array_get_slice(self._isc_status,
-                                          self.__get_connection()._db_handle,
-                                          self.__get_transaction()._tr_handle,
+                tsize = ISC_LONG(total_size)
+                api.isc_array_get_slice(self._isc_status,
+                                          self.cursor._connection._db_handle,
+                                          self.cursor._transaction._tr_handle,
                                           arrayid, arraydesc,
                                           value_buffer, tsize)
                 if db_api_error(self._isc_status):
@@ -2255,7 +2530,7 @@ class PreparedStatement(object):
         value = []
         if dim == len(dimensions)-1:
             for i in xrange(dimensions[dim]):
-                if dtype in (ibase.blr_text,ibase.blr_text2):
+                if dtype in (blr_text,blr_text2):
                     val = ctypes.string_at(buf[bufpos:bufpos+esize],esize)
                     ### Todo: verify handling of P version differences
                     if ((self.__charset or PYTHON_MAJOR_VER == 3) 
@@ -2269,27 +2544,27 @@ class PreparedStatement(object):
                     else:
                         reallength = esize
                     val = val[:reallength]
-                elif dtype in (ibase.blr_varying,ibase.blr_varying2):
+                elif dtype in (blr_varying,blr_varying2):
                     val = ctypes.string_at(buf[bufpos:bufpos+esize])
                     if ((self.__charset or PYTHON_MAJOR_VER == 3) 
                         and subtype != 1):   # non OCTETS
                         val = b2u(val,self.__python_charset)
-                elif dtype in (ibase.blr_short,ibase.blr_long,ibase.blr_int64):
+                elif dtype in (blr_short,blr_long,blr_int64):
                     val = bytes_to_int(buf[bufpos:bufpos+esize])
                     if (subtype or scale):
                         val = decimal.Decimal(val) / _tenTo[abs(256-scale)]
-                elif dtype == ibase.blr_float:
+                elif dtype == blr_float:
                     val = struct.unpack('f', buf[bufpos:bufpos+esize])[0]
-                elif dtype in (ibase.blr_d_float,ibase.blr_double):
+                elif dtype in (blr_d_float,blr_double):
                     val = struct.unpack('d', buf[bufpos:bufpos+esize])[0]
-                elif dtype == ibase.blr_timestamp:
+                elif dtype == blr_timestamp:
                     yyyy, mm, dd = self._parse_date(buf[bufpos:bufpos+4])
                     h, m, s, ms = self._parse_time(buf[bufpos+4:bufpos+esize])
                     val = datetime.datetime(yyyy, mm, dd, h, m, s, ms)
-                elif dtype == ibase.blr_sql_date:
+                elif dtype == blr_sql_date:
                     yyyy, mm, dd = self._parse_date(buf[bufpos:bufpos+esize])
                     val = datetime.date(yyyy, mm, dd)
-                elif dtype == ibase.blr_sql_time:
+                elif dtype == blr_sql_time:
                     h, m, s, ms = self._parse_time(buf[bufpos:bufpos+esize])
                     val = datetime.time(h, m, s, ms)
                 else:
@@ -2307,28 +2582,28 @@ class PreparedStatement(object):
         """Copies Python list(s) to ARRRAY column data buffer.
         """
         valuebuf = None
-        if dtype in (ibase.blr_text,ibase.blr_text2):
+        if dtype in (blr_text,blr_text2):
             valuebuf = ctypes.create_string_buffer(bs([0]),esize)
-        elif dtype in (ibase.blr_varying,ibase.blr_varying2):
+        elif dtype in (blr_varying,blr_varying2):
             valuebuf = ctypes.create_string_buffer(bs([0]),esize)
-        elif dtype in (ibase.blr_short,ibase.blr_long,ibase.blr_int64):
+        elif dtype in (blr_short,blr_long,blr_int64):
             if esize == 2:
-                valuebuf = ibase.ISC_SHORT(0)
+                valuebuf = ISC_SHORT(0)
             elif esize == 4:
-                valuebuf = ibase.ISC_LONG(0)
+                valuebuf = ISC_LONG(0)
             elif esize == 8:
-                valuebuf = ibase.ISC_INT64(0)
+                valuebuf = ISC_INT64(0)
             else:
                 raise OperationalError("Unsupported number type")
-        elif dtype == ibase.blr_float:
+        elif dtype == blr_float:
             valuebuf = ctypes.create_string_buffer(bs([0]),esize)
-        elif dtype in (ibase.blr_d_float,ibase.blr_double):
+        elif dtype in (blr_d_float,blr_double):
             valuebuf = ctypes.create_string_buffer(bs([0]),esize)
-        elif dtype == ibase.blr_timestamp:
+        elif dtype == blr_timestamp:
             valuebuf = ctypes.create_string_buffer(bs([0]),esize)
-        elif dtype == ibase.blr_sql_date:
+        elif dtype == blr_sql_date:
             valuebuf = ctypes.create_string_buffer(bs([0]),esize)
-        elif dtype == ibase.blr_sql_time:
+        elif dtype == blr_sql_time:
             valuebuf = ctypes.create_string_buffer(bs([0]),esize)
         else:
             raise OperationalError("Unsupported Firebird ARRAY subtype: %i" % dtype)
@@ -2343,8 +2618,8 @@ class PreparedStatement(object):
                                value,valuebuf,buf,bufpos):
         if dim == len(dimensions)-1:
             for i in xrange(dimensions[dim]):
-                if dtype in (ibase.blr_text,ibase.blr_text2,
-                             ibase.blr_varying,ibase.blr_varying2):
+                if dtype in (blr_text,blr_text2,
+                             blr_varying,blr_varying2):
                     val = value[i]
                     if isinstance(val, UnicodeType):
                         val = val.encode(self.__python_charset)
@@ -2354,7 +2629,7 @@ class PreparedStatement(object):
                                                                      len(val)))
                     valuebuf.value = val
                     ctypes.memmove(ctypes.byref(buf,bufpos),valuebuf,esize)
-                elif dtype in (ibase.blr_short,ibase.blr_long,ibase.blr_int64):
+                elif dtype in (blr_short,blr_long,blr_int64):
                     if (subtype or scale):
                         val = value[i]
                         if isinstance(val, decimal.Decimal):
@@ -2379,19 +2654,19 @@ class PreparedStatement(object):
                     ctypes.memmove(ctypes.byref(buf,bufpos),
                                    ctypes.byref(valuebuf),
                                    esize)
-                elif dtype == ibase.blr_float:
+                elif dtype == blr_float:
                     valuebuf.value = struct.pack('f', value[i])
                     ctypes.memmove(ctypes.byref(buf,bufpos),valuebuf,esize)
-                elif dtype in (ibase.blr_d_float,ibase.blr_double):
+                elif dtype in (blr_d_float,blr_double):
                     valuebuf.value = struct.pack('d', value[i])
                     ctypes.memmove(ctypes.byref(buf,bufpos),valuebuf,esize)
-                elif dtype == ibase.blr_timestamp:
+                elif dtype == blr_timestamp:
                     valuebuf.value = self._convert_timestamp(value[i])
                     ctypes.memmove(ctypes.byref(buf,bufpos),valuebuf,esize)
-                elif dtype == ibase.blr_sql_date:
+                elif dtype == blr_sql_date:
                     valuebuf.value = self._convert_date(value[i])
                     ctypes.memmove(ctypes.byref(buf,bufpos),valuebuf,esize)
-                elif dtype == ibase.blr_sql_time:
+                elif dtype == blr_sql_time:
                     valuebuf.value = self._convert_time(value[i])
                     ctypes.memmove(ctypes.byref(buf,bufpos),valuebuf,esize)
                 else:
@@ -2416,23 +2691,23 @@ class PreparedStatement(object):
         for i in xrange(dimensions[dim]):
             if dim == len(dimensions)-1:
                 # leaf: check value type
-                if value_type in (ibase.blr_text,ibase.blr_text2,
-                             ibase.blr_varying,ibase.blr_varying2):
+                if value_type in (blr_text,blr_text2,
+                             blr_varying,blr_varying2):
                     ok = isinstance(value[i],(ibase.StringType,ibase.UnicodeType))
-                elif value_type in (ibase.blr_short,ibase.blr_long,ibase.blr_int64):
+                elif value_type in (blr_short,blr_long,blr_int64):
                     if (sqlsubtype or value_scale):
                         ok = isinstance(value[i],decimal.Decimal)
                     else:
                         ok = isinstance(value[i],ibase.IntType)
-                elif value_type == ibase.blr_float:
+                elif value_type == blr_float:
                     ok = isinstance(value[i],ibase.FloatType)
-                elif value_type in (ibase.blr_d_float,ibase.blr_double):
+                elif value_type in (blr_d_float,blr_double):
                     ok = isinstance(value[i],ibase.FloatType)
-                elif value_type == ibase.blr_timestamp:
+                elif value_type == blr_timestamp:
                     ok = isinstance(value[i],datetime.datetime)
-                elif value_type == ibase.blr_sql_date:
+                elif value_type == blr_sql_date:
                     ok = isinstance(value[i],datetime.date)
-                elif value_type == ibase.blr_sql_time:
+                elif value_type == blr_sql_time:
                     ok = isinstance(value[i],datetime.time)
                 else:
                     ok = False
@@ -2529,8 +2804,8 @@ class PreparedStatement(object):
                         ctypes.pointer(ctypes.create_string_buffer(
                             struct.pack('d', value))), buf_pointer)
                 elif vartype == SQL_BLOB:
-                    blobid = ibase.ISC_QUAD(0, 0)
-                    blob_handle = ibase.isc_blob_handle()
+                    blobid = ISC_QUAD(0, 0)
+                    blob_handle = isc_blob_handle()
                     ### Todo: verify handling of P version differences
                     if ((self.__charset or 
                          (PYTHON_MAJOR_VER == 3 and isinstance(value, str))) 
@@ -2538,9 +2813,9 @@ class PreparedStatement(object):
                         value = value.encode(self.__python_charset)
                     if hasattr(value,'read'):
                         # It seems we've got file-like object, use stream BLOB
-                        ibase.isc_create_blob2(self._isc_status,
-                                               self.__get_connection()._db_handle,
-                                               self.__get_transaction()._tr_handle,
+                        api.isc_create_blob2(self._isc_status,
+                                               self.cursor._connection._db_handle,
+                                               self.cursor._transaction._tr_handle,
                                                blob_handle, blobid, 4, 
                                                bs([ibase.isc_bpb_version1,
                                                    ibase.isc_bpb_type,1,
@@ -2552,10 +2827,11 @@ class PreparedStatement(object):
                         sqlvar.sqldata = ctypes.cast(ctypes.pointer(blobid),
                                                      buf_pointer)
                         blob = ctypes.create_string_buffer(MAX_BLOB_SEGMENT_SIZE)
-                        blob.raw = ibase.b(value.read(MAX_BLOB_SEGMENT_SIZE))
-                        while len(blob.value) > 0:
-                            ibase.isc_put_segment(self._isc_status, blob_handle,
-                                                  len(blob.value),
+                        value_chunk = value.read(MAX_BLOB_SEGMENT_SIZE)
+                        blob.raw = ibase.b(value_chunk)
+                        while len(value_chunk) > 0:
+                            api.isc_put_segment(self._isc_status, blob_handle,
+                                                  len(value_chunk),
                                                   ctypes.byref(blob)
                                                   )
                             if db_api_error(self._isc_status):
@@ -2563,8 +2839,9 @@ class PreparedStatement(object):
                                                             self._isc_status,
                                                             "Cursor.write_input_blob/isc_put_segment:")
                             ctypes.memset(blob,0,MAX_BLOB_SEGMENT_SIZE)
-                            blob.raw = ibase.b(value.read(MAX_BLOB_SEGMENT_SIZE))
-                        ibase.isc_close_blob(self._isc_status, blob_handle)
+                            value_chunk = value.read(MAX_BLOB_SEGMENT_SIZE)
+                            blob.raw = ibase.b(value_chunk)
+                        api.isc_close_blob(self._isc_status, blob_handle)
                         if db_api_error(self._isc_status):
                             raise exception_from_status(DatabaseError,
                                                         self._isc_status,
@@ -2576,9 +2853,9 @@ class PreparedStatement(object):
                                             ' acceptable input for'
                                             ' a non-textual BLOB column.')
                         blob = ctypes.create_string_buffer(value)
-                        ibase.isc_create_blob2(self._isc_status,
-                                               self.__get_connection()._db_handle,
-                                               self.__get_transaction()._tr_handle,
+                        api.isc_create_blob2(self._isc_status,
+                                               self.cursor._connection._db_handle,
+                                               self.cursor._transaction._tr_handle,
                                                blob_handle, blobid, 0, None)
                         if db_api_error(self._isc_status):
                             raise exception_from_status(DatabaseError,
@@ -2596,7 +2873,7 @@ class PreparedStatement(object):
                                 ):
                                 bytes_to_write_this_time = (total_size -
                                                             bytes_written_so_far)
-                            ibase.isc_put_segment(self._isc_status, blob_handle,
+                            api.isc_put_segment(self._isc_status, blob_handle,
                                                   bytes_to_write_this_time,
                                                   ctypes.byref(blob,
                                                                bytes_written_so_far
@@ -2607,22 +2884,22 @@ class PreparedStatement(object):
                                                             self._isc_status,
                                                             "Cursor.write_input_blob/isc_put_segment:")
                             bytes_written_so_far += bytes_to_write_this_time
-                        ibase.isc_close_blob(self._isc_status, blob_handle)
+                        api.isc_close_blob(self._isc_status, blob_handle)
                         if db_api_error(self._isc_status):
                             raise exception_from_status(DatabaseError,
                                                         self._isc_status,
                                                         "Cursor.write_input_blob/isc_close_blob:")
                 elif vartype == SQL_ARRAY:
-                    arrayid = ibase.ISC_QUAD(0,0)
+                    arrayid = ISC_QUAD(0,0)
                     arrayid_ptr = ctypes.pointer(arrayid)
-                    arraydesc = ibase.ISC_ARRAY_DESC(0)
+                    arraydesc = ISC_ARRAY_DESC(0)
                     sqlvar.sqldata = ctypes.cast(ctypes.pointer(arrayid),
                                                  buf_pointer)
-                    sqlsubtype = self.__get_connection()._get_array_sqlsubtype(sqlvar.relname,
+                    sqlsubtype = self.cursor._connection._get_array_sqlsubtype(sqlvar.relname,
                                                                                sqlvar.sqlname)
-                    ibase.isc_array_lookup_bounds(self._isc_status,
-                                                  self.__get_connection()._db_handle,
-                                                  self.__get_transaction()._tr_handle,
+                    api.isc_array_lookup_bounds(self._isc_status,
+                                                  self.cursor._connection._db_handle,
+                                                  self.cursor._transaction._tr_handle,
                                                   sqlvar.relname,
                                                   sqlvar.sqlname,
                                                   arraydesc)
@@ -2633,7 +2910,7 @@ class PreparedStatement(object):
                     value_type = arraydesc.array_desc_dtype
                     value_scale = arraydesc.array_desc_scale
                     value_size = arraydesc.array_desc_length
-                    if value_type in (ibase.blr_varying,ibase.blr_varying2):
+                    if value_type in (blr_varying,blr_varying2):
                         value_size += 2
                     dimensions = []
                     total_num_elements = 1
@@ -2648,14 +2925,14 @@ class PreparedStatement(object):
                                                        value_scale,value):
                         raise ValueError("Incorrect ARRAY field value.")
                     value_buffer = ctypes.create_string_buffer(total_size)
-                    tsize = ibase.ISC_LONG(total_size)
+                    tsize = ISC_LONG(total_size)
                     self.__copy_list_to_db_array(value_size,value_type,
                                                  sqlsubtype,value_scale,
                                                  0, dimensions,
                                                  value,value_buffer,0)
-                    ibase.isc_array_put_slice(self._isc_status,
-                                              self.__get_connection()._db_handle,
-                                              self.__get_transaction()._tr_handle,
+                    api.isc_array_put_slice(self._isc_status,
+                                              self.cursor._connection._db_handle,
+                                              self.cursor._transaction._tr_handle,
                                               arrayid_ptr, arraydesc,
                                               value_buffer, 
                                               tsize)
@@ -2673,14 +2950,12 @@ class PreparedStatement(object):
             while len(self.__blob_readers) > 0:
                 self.__blob_readers.pop().close()
             if self.statement_type == isc_info_sql_stmt_select:
-                ibase.isc_dsql_free_statement(self._isc_status,
+                api.isc_dsql_free_statement(self._isc_status,
                                               self._stmt_handle,
                                               ibase.DSQL_close)
                 if db_api_error(self._isc_status):
                     raise exception_from_status(DatabaseError, self._isc_status,
                                   "Error while releasing SQL statement handle:")
-    def _callproc(self, procname, parameters=None):
-        raise NotImplementedError('PreparedStatement.callproc')
     def _close(self):
         if self._stmt_handle != None:
             while len(self.__blob_readers) > 0:
@@ -2693,12 +2968,12 @@ class PreparedStatement(object):
             self.__description = None
             self.__output_cache = None
             self._name = None
-            #self.out_buffer = None
-            connection = self.__get_connection()
-            if connection and not connection.closed:
-                ibase.isc_dsql_free_statement(self._isc_status, stmt_handle,
+            connection = self.cursor._connection if self.cursor else None
+            if (not connection) or (connection and not connection.closed):
+                api.isc_dsql_free_statement(self._isc_status, stmt_handle,
                                               ibase.DSQL_drop)
-                if db_api_error(self._isc_status):
+                if (db_api_error(self._isc_status) 
+                    and (self._isc_status[1] not in [335544528,335544485])):
                     raise exception_from_status(DatabaseError, self._isc_status,
                                                 "Error while closing SQL statement:")
     def _execute(self, parameters=None):
@@ -2706,27 +2981,27 @@ class PreparedStatement(object):
         if parameters:
             if not isinstance(parameters, (ListType, TupleType)):
                 raise TypeError("parameters must be list or tuple")
-            if len(parameters) > self.in_sqlda.sqln:
+            if len(parameters) > self._in_sqlda.sqln:
                 raise ProgrammingError("Statement parameter sequence contains"
                                        " %d parameters, but only %d are allowed" %
-                                       (len(parameters), self.in_sqlda.sqln))
+                                       (len(parameters), self._in_sqlda.sqln))
             # Restore original type and size information for input parameters
             i = 0
-            for sqlvar in self.in_sqlda.sqlvar[:self.n_input_params]:
-                sqlvar.sqltype, sqlvar.sqllen = self.in_sqlda_save[i]
+            for sqlvar in self._in_sqlda.sqlvar[:self.n_input_params]:
+                sqlvar.sqltype, sqlvar.sqllen = self._in_sqlda_save[i]
                 i += 1
-            self.__Tuple2XSQLDA(self.in_sqlda, parameters)
-            xsqlda_in = ctypes.cast(ctypes.pointer(self.in_sqlda), XSQLDA_PTR)
+            self.__Tuple2XSQLDA(self._in_sqlda, parameters)
+            xsqlda_in = ctypes.cast(ctypes.pointer(self._in_sqlda), XSQLDA_PTR)
         else:
             xsqlda_in = None
         # Execute the statement
         if ((self.statement_type == isc_info_sql_stmt_exec_procedure)
-            and (self.out_sqlda.sqld > 0)):
+            and (self._out_sqlda.sqld > 0)):
             # NOTE: We have to pass xsqlda_out only for statements that return
             # single row
-            xsqlda_out = ctypes.cast(ctypes.pointer(self.out_sqlda), XSQLDA_PTR)
-            ibase.isc_dsql_execute2(self._isc_status,
-                                    self.__get_transaction()._tr_handle,
+            xsqlda_out = ctypes.cast(ctypes.pointer(self._out_sqlda), XSQLDA_PTR)
+            api.isc_dsql_execute2(self._isc_status,
+                                    self.cursor._transaction._tr_handle,
                                     self._stmt_handle,
                                     self.__sql_dialect,
                                     xsqlda_in,
@@ -2738,10 +3013,10 @@ class PreparedStatement(object):
             # via fetch*() calls as Python DB API requires. However, it's not
             # possible to call fetch on open such statement, so we'll cache
             # the result and return it in fetchone instead calling fetch.
-            self.__output_cache = self.__XSQLDA2Tuple(self.out_sqlda)
+            self.__output_cache = self.__XSQLDA2Tuple(self._out_sqlda)
         else:
-            ibase.isc_dsql_execute2(self._isc_status,
-                                    self.__get_transaction()._tr_handle,
+            api.isc_dsql_execute2(self._isc_status,
+                                    self.cursor._transaction._tr_handle,
                                     self._stmt_handle,
                                     self.__sql_dialect,
                                     xsqlda_in,
@@ -2752,7 +3027,7 @@ class PreparedStatement(object):
             self.__output_cache = None
         self.__executed = True
         self.__closed = False
-        self._last_fetch_status = ibase.ISC_STATUS(self.NO_FETCH_ATTEMPTED_YET)
+        self._last_fetch_status = ISC_STATUS(self.NO_FETCH_ATTEMPTED_YET)
     def _fetchone(self):
         if (self._last_fetch_status == self.RESULT_SET_EXHAUSTED 
             and not self.__output_cache):
@@ -2766,13 +3041,15 @@ class PreparedStatement(object):
                     self._last_fetch_status = self.RESULT_SET_EXHAUSTED
                     return self.__output_cache
             else:
-                self._last_fetch_status = ibase.isc_dsql_fetch(
+                if self.n_output_params == 0:
+                    raise DatabaseError("Attempt to fetch row of results after statement that does not produce result set.")                
+                self._last_fetch_status = api.isc_dsql_fetch(
                     self._isc_status,
                     self._stmt_handle,
                     self.__sql_dialect,
-                    ctypes.cast(ctypes.pointer(self.out_sqlda), XSQLDA_PTR))
+                    ctypes.cast(ctypes.pointer(self._out_sqlda), XSQLDA_PTR))
                 if self._last_fetch_status == 0:
-                    return self.__XSQLDA2Tuple(self.out_sqlda)
+                    return self.__XSQLDA2Tuple(self._out_sqlda)
                 elif self._last_fetch_status == self.RESULT_SET_EXHAUSTED:
                     self._free_handle()
                     return None
@@ -2787,7 +3064,7 @@ class PreparedStatement(object):
             raise ProgrammingError("Cannot fetch from this cursor because"
                                    " it has not executed a statement.")
     def _set_cursor_name(self, name):
-        ibase.isc_dsql_set_cursor_name(self._isc_status,
+        api.isc_dsql_set_cursor_name(self._isc_status,
                                        self._stmt_handle, b(name), 0)
         if db_api_error(self._isc_status):
             raise exception_from_status(OperationalError, self._isc_status,
@@ -2938,8 +3215,14 @@ class Cursor(object):
             return self._ps.plan
         else:
             return None
+    def __get_connection(self):
+        return self._connection
+    def __get_transaction(self):
+        return self._transaction
+    def __connection_deleted(self,obj):
+        self._connection = None
     def _set_as_internal(self):
-        self._connection = weakref.ref(self._connection)
+        self._connection = weakref.proxy(self._connection,self.__connection_deleted)
     def callproc(self, procname, parameters=None):
         """Call a stored database procedure with the given name.
         
@@ -2978,8 +3261,9 @@ class Cursor(object):
            is executed, this current :class:`PreparedStatement` instance is disposed.
         """
         for ps in self._prepared_statements.values():
-            if ps != self._ps:
-                ps._close()
+            ps._close()
+            if ps == self._ps:
+                self._ps = None
         self._prepared_statements.clear()
     def close(self):
         """Close the cursor now (rather than whenever `__del__` is called).
@@ -3071,6 +3355,7 @@ class Cursor(object):
            direct use of prepared statement and calling `execute` in a loop 
            directly in application.
         
+        :returns: self, so call to executemany could be used as iterator.
         :param operation: SQL command specification.
         :type operation: string or :class:`PreparedStatement` instance
         :param seq_of_parameters: Sequence of sequences of parameters. Must contain 
@@ -3087,6 +3372,7 @@ class Cursor(object):
         """
         for parameters in seq_of_parameters:
             self.execute(operation, parameters)
+        return self
     def fetchone(self):
         """Fetch the next row of a query result set.
         
@@ -3204,7 +3490,7 @@ class Cursor(object):
         :returns: Iterator that yields :class:`fbcore._RowMapping` instance 
                   like :meth:`fetchonemap`.
         """
-        return Iterator(self.fetchonemap, None)
+        return utils.Iterator(self.fetchonemap, None)
     def setinputsizes(self, sizes):
         """Required by Python DB API 2.0, but pointless for Firebird, so it
         does nothing."""
@@ -3274,6 +3560,12 @@ class Cursor(object):
     #: for last executed statement generated by the database engine’s optimizer.
     #: `None` if no statement was executed.
     plan = property(__get_plan)
+    #: (Read Only) (:class:`Connection`) PEP 249 Extension.
+    #: Reference to the :class:`Connection` object on which the cursor was created.
+    connection = property(__get_connection)
+    #: (Read Only) (:class:`Transaction`)
+    #: Reference to the :class:`Transaction` object on which the cursor was created.
+    transaction = property(__get_transaction)
 
 
 class Transaction(object):
@@ -3288,6 +3580,12 @@ class Transaction(object):
        use :meth:`Connection.trans` method to obtain such `Transaction` instance.
     
     """
+    #: (Read/Write) Transaction Parameter Block.
+    default_tpb = ISOLATION_LEVEL_READ_COMMITED
+    #: (Read/Write) Default action on active transaction when it's closed.
+    #: Accepted values: commit, rollback
+    default_action = 'commit'
+
     def __init__(self, connections, default_tpb=None, default_action='commit'):
         """
         :param iterable connections: Sequence of (up to 16) :class:`Connection` instances.
@@ -3309,8 +3607,6 @@ class Transaction(object):
         if default_tpb == None:
             self.default_tpb = ISOLATION_LEVEL_READ_COMMITED
         else:
-            #: (Read/Write) Transaction Parameter Block.
-            #: **Default is ISOLATION_LEVEL_READ_COMMITED**.
             self.default_tpb = default_tpb
         self.default_action = default_action
         self._cursors = []  # Weak references to cursors
@@ -3371,7 +3667,7 @@ class Transaction(object):
         for connection in self._connections:
             con = connection()
             sql = b(sql, con._python_charset)
-            ibase.isc_execute_immediate(self._isc_status,
+            api.isc_execute_immediate(self._isc_status,
                                         con._db_handle,
                                         self._tr_handle,
                                         ctypes.c_short(len(sql)), sql)
@@ -3414,7 +3710,7 @@ class Transaction(object):
         if self.__closed:
             raise ProgrammingError("Transaction is permanently closed.")
         self._finish()  # Make sure that previous transaction (if any) is ended
-        self._tr_handle = ibase.isc_tr_handle(0)
+        self._tr_handle = isc_tr_handle(0)
         _tpb = tpb if tpb else self.default_tpb
         if isinstance(_tpb, TPB):
             _tpb = _tpb.render()
@@ -3431,7 +3727,7 @@ class Transaction(object):
             if _tpb[0] != bs([isc_tpb_version3]):
                 _tpb = bs([isc_tpb_version3]) + _tpb
         if len(self._connections) == 1:
-            ibase.isc_start_transaction(self._isc_status, self._tr_handle, 1,
+            api.isc_start_transaction(self._isc_status, self._tr_handle, 1,
                                         self._connections[0]()._db_handle,
                                         len(_tpb), _tpb)
             if db_api_error(self._isc_status):
@@ -3445,7 +3741,7 @@ class Transaction(object):
                 teb_array[i].db_ptr = ctypes.pointer(self._connections[i]()._db_handle)
                 teb_array[i].tpb_len = len(_tpb)
                 teb_array[i].tpb_ptr = _tpb
-            ibase.isc_start_multiple(self._isc_status, self._tr_handle,
+            api.isc_start_multiple(self._isc_status, self._tr_handle,
                                      cnum,
                                      teb_array
                                      )
@@ -3469,10 +3765,10 @@ class Transaction(object):
         if not self.active:
             return
         if retaining:
-            ibase.isc_commit_retaining(self._isc_status, self._tr_handle)
+            api.isc_commit_retaining(self._isc_status, self._tr_handle)
         else:
             self.__close_cursors()
-            ibase.isc_commit_transaction(self._isc_status, self._tr_handle)
+            api.isc_commit_transaction(self._isc_status, self._tr_handle)
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError, self._isc_status,
                                         "Error while commiting transaction:")
@@ -3506,10 +3802,10 @@ class Transaction(object):
             self.execute_immediate('rollback to %s' % savepoint)
         else:
             if retaining:
-                ibase.isc_rollback_retaining(self._isc_status, self._tr_handle)
+                api.isc_rollback_retaining(self._isc_status, self._tr_handle)
             else:
                 self.__close_cursors()
-                ibase.isc_rollback_transaction(self._isc_status,
+                api.isc_rollback_transaction(self._isc_status,
                                                self._tr_handle)
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError, self._isc_status,
@@ -3532,6 +3828,8 @@ class Transaction(object):
             self._finish()
         except Exception as e:
             exc = e
+        for cur in self._cursors:
+            cur().clear_cache()
         del self._cursors[:]
         del self._connections[:]
         self.__closed = True
@@ -3646,7 +3944,7 @@ class Transaction(object):
         buf_size = 256
         while True:
             res_buf = int2byte(0) * buf_size
-            ibase.isc_transaction_info(self._isc_status, self._tr_handle,
+            api.isc_transaction_info(self._isc_status, self._tr_handle,
                                        len(request_buffer), request_buffer,
                                        len(res_buf), res_buf)
             if db_api_error(self._isc_status):
@@ -3658,7 +3956,7 @@ class Transaction(object):
                     break
                 else:
                     i -= 1
-            if ord2(res_buf[i]) == ibase.isc_info_truncated:
+            if ord2(res_buf[i]) == isc_info_truncated:
                 if buf_size < SHRT_MAX:
                     buf_size *= 2
                     if buf_size > SHRT_MAX:
@@ -3691,7 +3989,7 @@ class Transaction(object):
            manually, it will be performed implicitly by `commit()` in a 2PC.
         """
         self.__check_active()
-        ibase.isc_prepare_transaction(self._isc_status, self._tr_handle)
+        api.isc_prepare_transaction(self._isc_status, self._tr_handle)
         if db_api_error(self._isc_status):
             self.rollback()
             raise exception_from_status(DatabaseError, self._isc_status,
@@ -4012,7 +4310,7 @@ class BlobReader(object):
         self.__bytes_read = 0
         self.__pos = 0
         self.__index = 0
-        #self.__bstream = ibase.Bopen(blobid, db_handle, tr_handle, self.__mode)
+        #self.__bstream = api.Bopen(blobid, db_handle, tr_handle, self.__mode)
         self.__db_handle = db_handle
         self.__tr_handle = tr_handle
         self.__is_text = is_text
@@ -4020,7 +4318,7 @@ class BlobReader(object):
         self.__python_charset = charset_map.get(charset,charset)
         self.__blobid = blobid
         self.__opened = False
-        self._blob_handle = ibase.isc_blob_handle()
+        self._blob_handle = isc_blob_handle()
         self._isc_status = ISC_STATUS_ARRAY()
     def __ensure_open(self):
         if self.closed:
@@ -4028,7 +4326,7 @@ class BlobReader(object):
         if not self.__opened:
             self.__open()
     def __open(self):
-        ibase.isc_open_blob2(self._isc_status,
+        api.isc_open_blob2(self._isc_status,
                              self.__db_handle,
                              self.__tr_handle,
                              self._blob_handle, self.__blobid, 4, 
@@ -4042,9 +4340,9 @@ class BlobReader(object):
         # Get BLOB total length and max. size of segment
         result = ctypes.cast(ctypes.create_string_buffer(20),
                              buf_pointer)
-        ibase.isc_blob_info(self._isc_status, self._blob_handle, 2,
-                            bs([ibase.isc_info_blob_total_length,
-                                ibase.isc_info_blob_max_segment]),
+        api.isc_blob_info(self._isc_status, self._blob_handle, 2,
+                            bs([isc_info_blob_total_length,
+                                isc_info_blob_max_segment]),
                             20, result)
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError,
@@ -4054,12 +4352,12 @@ class BlobReader(object):
         while bytes_to_uint(result[offset]) != isc_info_end:
             code = bytes_to_uint(result[offset])
             offset += 1
-            if code == ibase.isc_info_blob_total_length:
+            if code == isc_info_blob_total_length:
                 length = bytes_to_uint(result[offset:offset + 2])
                 self._blob_length = bytes_to_uint(result[
                     offset + 2:offset + 2 + length])
                 offset += length + 2
-            elif code == ibase.isc_info_blob_max_segment:
+            elif code == isc_info_blob_max_segment:
                 length = bytes_to_uint(result[offset:offset + 2])
                 self._segment_size = bytes_to_uint(result[
                     offset + 2:offset + 2 + length])
@@ -4077,10 +4375,10 @@ class BlobReader(object):
         self.__reset_buffer()
         # Load BLOB
         allow_incomplete_segment_read = False
-        status = ibase.ISC_STATUS(0)
+        status = ISC_STATUS(0)
         bytes_read = 0
         bytes_actually_read = ctypes.c_ushort(0)
-        status = ibase.isc_get_segment(self._isc_status,
+        status = api.isc_get_segment(self._isc_status,
                                        self._blob_handle,
                                        bytes_actually_read,
                                        self._segment_size,
@@ -4088,7 +4386,7 @@ class BlobReader(object):
         if status != 0:
             if status == ibase.isc_segstr_eof:
                 self.__buf_data = 0
-            elif ((status == ibase.isc_segment)
+            elif ((status == isc_segment)
                 and allow_incomplete_segment_read):
                 self.__buf_data = bytes_actually_read.value
             else:
@@ -4104,7 +4402,7 @@ class BlobReader(object):
         """
         if self.__opened and not self.closed:
             self.__closed = True
-            ibase.isc_close_blob(self._isc_status, self._blob_handle)
+            api.isc_close_blob(self._isc_status, self._blob_handle)
             if db_api_error(self._isc_status):
                 raise exception_from_status(DatabaseError,
                                             self._isc_status,
@@ -4142,10 +4440,11 @@ class BlobReader(object):
         """
         self.__ensure_open()
         if size >= 0:
-            to_read = size
+            to_read = min(size,self._blob_length - self.__pos)
         else:
             to_read = self._blob_length - self.__pos
-        result = ctypes.create_string_buffer(to_read)
+        return_size = to_read
+        result = ctypes.create_string_buffer(return_size)
         pos = 0
         while to_read > 0:
             to_copy = min(to_read, self.__buf_data - self.__buf_pos)
@@ -4162,7 +4461,7 @@ class BlobReader(object):
             self.__pos += to_copy
             self.__buf_pos += to_copy
             to_read -= to_copy
-        result = result.value
+        result = result.raw[:return_size]
         if (self.__charset or PYTHON_MAJOR_VER == 3) and self.__is_text:
             result = b2u(result,self.__python_charset)
         return result
@@ -4240,10 +4539,10 @@ class BlobReader(object):
            :exc:`DatabaseError` exception. This constraint is set by Firebird.
         """
         self.__ensure_open()
-        pos = ibase.ISC_LONG(0)
-        ibase.isc_seek_blob (self._isc_status,
+        pos = ISC_LONG(0)
+        api.isc_seek_blob (self._isc_status,
                              self._blob_handle,
-                             whence, ibase.ISC_LONG(offset), ctypes.byref(pos))
+                             whence, ISC_LONG(offset), ctypes.byref(pos))
         if db_api_error(self._isc_status):
             raise exception_from_status(DatabaseError,
                                         self._isc_status,
@@ -4264,25 +4563,6 @@ class BlobReader(object):
     closed = property(__get_closed)
     #: (Read Only) (string) File mode - always "rb"
     mode = property(__get_mode)
-
-class Iterator(object):
-    def __init__(self, method, sentinel):
-        self.getnext = method
-        self.sentinel = sentinel
-        self.exhausted = False
-    def __iter__(self):
-        return self
-    def next(self):
-        if self.exhausted:
-            raise StopIteration
-        else:
-            result = self.getnext()
-            self.exhausted = (result == self.sentinel)
-            if self.exhausted:
-                raise StopIteration
-            else:
-                return result
-    __next__ = next
 
 
 class _RowMapping(object):
